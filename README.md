@@ -43,3 +43,7 @@ I'm "only" the author of this script, no more.\
 Dependencies and plug-ins licenses/copyrights belong to their respective authors.\
 This script is available under *GNU AGPLv3*.
 Any modification/redistribution/use for non-personal purpose MUST link to this GitHub repository, as well as mentionning the changes made. Read the GNU AGPLv3 for further informations.
+
+## Donations
+Please consider donating, either to make a request (it will be given priority) or simply to support me. Thanks!\
+[![Donate with PayPal](https://raw.githubusercontent.com/stefan-niedermann/paypal-donate-button/master/paypal-donate-button.png)](https://www.paypal.com/donate/?hosted_button_id=GK4MGMCVRUYZQ)
