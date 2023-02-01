@@ -28,6 +28,8 @@ I'm open to suggestions (as always!).\
 [apngopt](https://apng.sourceforge.io/) [ECT](https://github.com/fhanau/Efficient-Compression-Tool) [MP3Packer](https://hydrogenaud.io/index.php/topic,32379.0.html)
 
 ## Supported file types
+For each file type, I test many and many softwares, and only keep the one providing the smallest output files.\
+If you want to know which softwares I tested, read the comments in the script.
 Fully supported file types:
 Extension|Mime-type|Behaviour
 :---:|:---:|---
