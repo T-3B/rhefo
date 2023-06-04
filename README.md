@@ -19,12 +19,12 @@ I want this program to be compatible with any Linux system, and Android support 
 I don't like Windows and don't plan to support it, but if someone knows how to use this script on Windows I'd really like to hear it!
 
 ## Installation
-TODO (I'm thinking of placing everything - rhefo.sh + plug-ins - in a subfolder in PATH, easier to remove things when I drop an add-in)
+TODO (I'm thinking of placing everything - rhefo.sh + plug-ins - in a subfolder in PATH, easier to remove things when I drop an add-in).
 
 ## Usage & examples
 This script will optimize any folder/file inputs given, with the possibility to write outputs to another directory (or optimize inplace).\
 This script **completely supports exotic filenames**! For example, filenames can have `*`, start with a dash `-`, have a newline char `\n` or any non-printable chars.\
-Symlinks were *not* tested (even embedded in archives), and could break your machine (well I don't think so, but you've been warned).\
+Symlinks were *not* tested (even embedded in archives), and could break your machine (well I don't think so, but you've been warned).
 
 Optimize recursively current dir, inplace\
 `rhefo .`\
@@ -37,7 +37,7 @@ Optimize 2 files with default settings and write them to an existing /dir\
 Optimize all FLAC files in /path/to/dir, recursively and in hidden dirs and output will be copied to /out/dir (filetree is recreated from /path/to/dir)\
 `rhefo -o /out -m "*.flac" /path/to/dir`\
 Same as above, but flattened (no subdirectories in /out/dir)\
-`find -name "*.flac" -type f -print0 | xargs -0 rhefo -s`\
+`find -name "*.flac" -type f -print0 | xargs -0 rhefo -s`
 
 For further help and options, see the output of `rhefo -h` (and it's beautiful with lots of colors!).\
 As you can see, there are *global options* (starting with `glob`) and type-specific options (starting with `flac`, `png`, ...).
@@ -55,24 +55,28 @@ I'm open to suggestions (as always!).\
 [apngopt](https://apng.sourceforge.io/) [ECT](https://github.com/fhanau/Efficient-Compression-Tool) [MP3Packer](https://hydrogenaud.io/index.php/topic,32379.0.html)
 
 ## Supported file types
+
 For each file type, I test many and many softwares, and only keep the one(s) providing the smallest output files.\
 In many case different programs are used one after the other, allowing for the best compression.\
 If you want to know which softwares I tested or more explanations, read the script comments.\
 In the "Behaviour" column, texts in italics are the default behaviour.\
 Fully supported file types:
-::: TODO remove normal/insane from "behaviour" description and add speed.
-Extension|Mime-type|Dependencies|Behaviour|*Default*/insane time
-:---:|:---:|---|:---:
-`.flac`|`audio/flac` `audio/x-flac`|`flac`|Uses [reference FLAC encoder](https://github.com/xiph/flac), extract+optimize+remux embedded media files, (*non*-)subset file, remove/*keep* seek-table, remove/*keep* vendor string, *remove*/keep metadata padding, remove/*keep* metadata, *normal*/insane encoding time.
-`.gz` `.tgz` `.svgz`|`application/gzip` `application/x-gzip`|`gzip` `ect`|Uses [ECT](https://github.com/fhanau/Efficient-Compression-Tool), extract+optimize+remux, remove/*keep* original filename, *normal*/insane encoding time.
-`.mp3`|`application/octet-stream` `audio/mpeg` `audio/mp3` `audio/mpeg3` `audio/x-mpeg-3`|`mp3packer`|Uses [MP3Packer](https://hydrogenaud.io/index.php/topic,32379.0.html), extract+optimize+remux embedded media files, delete/*write* Xing frame, *remove*/keep metadata padding, remove/*keep* metadata.
-`.tar` `.cbt`|`application/x-tar` `application/x-cbt`|`tar`|Extract+optimize+remux files. Trust me, there **are** ways to optimize a TAR (without optimizing embedded files themselves). **Umask + owner/group are not preserved.**
+// TODO remove normal/insane from "behaviour" description and add speed.
+
+Extension|Mime-type|Dependencies|Behaviour|*Default*/insane&nbsp;speed
+:---:|:---:|:---:|---|:---:
+`.flac`|`audio/flac` `audio/x‑flac`|`flac`|Uses [reference FLAC encoder](https://github.com/xiph/flac), extract+optimize+remux embedded media files, (*non*-)subset file, remove/*keep* seek-table, remove/*keep* vendor string, *remove*/keep metadata padding, remove/*keep* metadata, *normal*/insane encoding time.|N/A
+`.gz` `.tgz` `.svgz`|`application/gzip` `application/x‑gzip`|`gzip` `ect`|Uses [ECT](https://github.com/fhanau/Efficient-Compression-Tool), extract+optimize+remux, remove/*keep* original filename, *normal*/insane encoding time.|N/A
+`.mp3`|`application/octet‑stream` `audio/mpeg` `audio/mp3` `audio/mpeg3` `audio/x-mpeg‑3`|`mp3packer`|Uses [MP3Packer](https://hydrogenaud.io/index.php/topic,32379.0.html), extract+optimize+remux embedded media files, delete/*write* Xing frame, *remove*/keep metadata padding, remove/*keep* metadata.|N/A
+`.tar` `.cbt`|`application/x-tar` `application/x-cbt`|`tar`|Extract+optimize+remux files. Trust me, there **are** ways to optimize a TAR (without optimizing embedded files themselves). **Umask + owner/group are not preserved.**|N/A
 ---
-Work in progress (already supported, but improvements can be done): `APNG JPG PNG`
+Work in progress (already supported, but improvements can be done):
+[]() | []() | []() | []()
+:---:|:---:|:---:|---
 `.jpg`|`image/jpeg`|`ect`|Uses [ECT](https://github.com/fhanau/Efficient-Compression-Tool), remove/keep metadata. I didn't test any other software for now.
-`.pdf`|`application/pdf`|`mupdf-tools` `qpdf`|Garbage collect unused objects/streams + merge/reuse duplicates + compact cross ref table + recompress Flate streams. No extraction for now (for both images and attached files).
-`.png` `.apng`|`image/png` `image/x-png` `image/vnd.mozilla.apng`|`ect` `apngopt`|Use [ECT](https://github.com/fhanau/Efficient-Compression-Tool) for PNG and [apngopt](https://apng.sourceforge.io/) for Animated PNG, remove/keep metadata, normal/"insane" encoding time.
-`.zip`| | |Segmented archives not supported.
+`.pdf`|`application/pdf`|`mupdf‑tools` `qpdf`|Garbage collect unused objects/streams + merge/reuse duplicates + compact cross ref table + recompress Flate streams. No extraction for now (for both images and attached files).
+`.png` `.apng`|`image/png` `image/x‑png` `image/vnd.mozilla.apng`|`ect` `apngopt`|Use [ECT](https://github.com/fhanau/Efficient-Compression-Tool) for PNG and [apngopt](https://apng.sourceforge.io/) for Animated PNG, remove/keep metadata, normal/"insane" encoding time.
+`.zip`| . | . |Segmented archives not supported.
 
 
 ## License
