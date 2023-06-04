@@ -1,6 +1,7 @@
 # RHEFO ![GitHub release (latest by date)](https://img.shields.io/github/v/release/T-3B/rhefo) ![GitHub all releases](https://img.shields.io/github/downloads/T-3B/rhefo/total) ![GitHub](https://img.shields.io/github/license/T-3B/rhefo?color=informational)
 Really High Efficient File Optimizer (RHEFO) will **losslessly** recompress files as much as possible, according to their mime-types.
 
+
 ## What is this?
 This tool is a file optimizer, thus it will recompress given files as much as possible while keeping the file type.\
 It will choose the correct optimization software based on the file [mime-type](https://mimetype.io).\
