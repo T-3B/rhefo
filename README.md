@@ -1,4 +1,5 @@
-# RHEFO ![GitHub release (latest by date)](https://img.shields.io/github/v/release/T-3B/rhefo) ![GitHub all releases](https://img.shields.io/github/downloads/T-3B/rhefo/total) ![Static Badge](https://img.shields.io/badge/license-SSPL-blue)
+# RHEFO ![GitHub release (latest by date)](https://img.shields.io/github/v/release/T-3B/rhefo) ![GitHub all releases](https://img.shields.io/github/downloads/T-3B/rhefo/total) ![Static Badge](https://img.shields.io/badge/license-SSPL-blue) [![Static Badge](https://img.shields.io/badge/Support_me!-f5af05?logo=PayPal)](https://www.paypal.com/donate/?hosted_button_id=GK4MGMCVRUYZQ)
+
 Really High Efficient File Optimizer (RHEFO) will **losslessly** recompress files as much as possible, according to their mime-types.
 
 
@@ -87,5 +88,10 @@ This script is available under *GNU AGPLv3*.
 Any modification/redistribution/use for non-personal purpose MUST link to this GitHub repository, as well as mentionning the changes made. Read the GNU AGPLv3 for further informations.
 
 ## Donations
-Please consider donating, either to make a request (it will be given priority) or simply to support me. Thanks!\
-[![Donate with PayPal](https://raw.githubusercontent.com/stefan-niedermann/paypal-donate-button/master/paypal-donate-button.png)](https://www.paypal.com/donate/?hosted_button_id=GK4MGMCVRUYZQ)
+Please consider donating, either to make a request (it will be given priority) or simply to support me. Thanks!
+
+<div align="center">
+  
+  [![Static Badge](https://img.shields.io/badge/Support_me!-f5af05?style=for-the-badge&logo=PayPal)](https://www.paypal.com/donate/?hosted_button_id=GK4MGMCVRUYZQ)
+
+</div>
