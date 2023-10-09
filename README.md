@@ -1,18 +1,19 @@
 # RHEFO ![GitHub release (latest by date)](https://img.shields.io/github/v/release/T-3B/rhefo) ![GitHub all releases](https://img.shields.io/github/downloads/T-3B/rhefo/total) ![Static Badge](https://img.shields.io/badge/license-SSPL-blue) [![Static Badge](https://img.shields.io/badge/Support_me!-f5af05?logo=PayPal)](https://www.paypal.com/donate/?hosted_button_id=GK4MGMCVRUYZQ)
-
 Really High Efficient File Optimizer (RHEFO) will **losslessly** recompress files as much as possible, according to their mime-types.
+This program favors *compression ratio* over speed.
 
 
 ## What is this?
 This tool is a file optimizer, thus it will recompress given files as much as possible while keeping the file type.\
 It will choose the correct optimization software based on the file [mime-type](https://mimetype.io).\
 There exist already a few of them: [nikkhokkho's FileOptimizer](https://nikkhokkho.sourceforge.io/static.php?page=FileOptimizer), [Papa's Best Optimizer](https://papas-best.com/optimizer_en), ...\
-But they are Windows programs, and can be beaten quite easily (in term of output file size).\
-Also, their code must be compiled and therefore are more difficult to modify and test.
+But they are Windows programs, and can be beaten quite easily (in term of compression ratio).\
+Also, their code must be compiled and therefore is more difficult to modify and test.
 
 The goal of RHEFO is not only to provide an easy way to optimize several file types, but also to allow the user to achieve maximum compression.\
-Some max compression settings need quite a lot of time, thus need a flag to be set (see the output of `rhefo.sh -h`).\
+Some max compression settings need quite a lot of time, thus need a flag to be set (see the output of `rhefo -h`).\
 This script intends to be "easily" editable, and **completely losslessly** (some options allow *lossy* operations on **metadata only**).\
+Please remember that this tool is under active development, and please read the table below in Supported file types (TODO add link) to check for possible unsupported stuffs (like metadata).\
 For any question, file type support request, or if you find a way to produce a smaller file, feel free to open an issue!\
 I will read them all :)
 
@@ -21,6 +22,7 @@ I don't like Windows and don't plan to support it, but if someone knows how to u
 
 ## Installation
 TODO (I'm thinking of placing everything - rhefo.sh + plug-ins - in a subfolder in PATH, easier to remove things when I drop an add-in).
+Or put everything directly in PATH (plug-ins havin a prefix "rhefo-...") and in the rhefo code add a flag to --uninstall for easier update.
 
 ## Usage & examples
 This script will optimize any folder/file inputs given, with the possibility to write outputs to another directory (or optimize inplace).\
@@ -38,22 +40,22 @@ Optimize 2 files with default settings and write them to an existing /dir\
 Optimize all FLAC files in /path/to/dir, recursively and in hidden dirs and output will be copied to /out/dir (filetree is recreated from /path/to/dir)\
 `rhefo -o /out -m "*.flac" /path/to/dir`\
 Same as above, but flattened (no subdirectories in /out/dir)\
-`find -name "*.flac" -type f -print0 | xargs -0 rhefo -s`
+`find -name "*.flac" -type f -print0 | xargs -0 rhefo -o /out`
 
 For further help and options, see the output of `rhefo -h` (and it's beautiful with lots of colors!).\
 As you can see, there are *global options* (starting with `glob`) and type-specific options (starting with `flac`, `png`, ...).
 
 ## Dependencies
 Here is a list of tools used by this script, listed in alphabetical order, easy to copy-paste for downloading (these are ArchLinux packages, name can change between distros).\
-The more the formats supported by FFmpeg, the better ! (See `ffmpeg-full` in the AUR.)\
+The more the formats supported by FFmpeg, the better ! See `ffmpeg-full` in the AUR. FFmpeg is an easy to solution for (de)muxing, but has some drawbacks. Therefore I try as much as possible not to use it, but in order to I have to write BASH code reading and extracting binary data, which takes time.\
 Global dependencies: `bash coreutils ffmpeg findutils grep parallel util-linux`.\
 File type specific dependencies (see the table below): `flac gzip mupdf-tools qpdf tar`
 
 ## Plug-ins
-This script also rely on several plug-ins. Since they are not available in repositories, I compile them myself and host them here.\
-I provide only x86-64 and aarch64, in different branches (TODO). They are all compressed using `upx -9 --ultra-brute` (see [UPX](https://github.com/upx/upx)).\
-I'm open to suggestions (as always!).\
-[apngopt](https://apng.sourceforge.io/) [ECT](https://github.com/fhanau/Efficient-Compression-Tool) [MP3Packer](https://hydrogenaud.io/index.php/topic,32379.0.html)
+This script also rely on several plug-ins. Since they are not distributed (through package managers), I compile them myself (when needed) and host them here.\
+I provide only x86-64 and aarch64, in different branches (TODO). They are all compressed using `upx -9 --ultra-brute` (see [UPX](https://github.com/upx/upx)), compiled with optimizations: `-O3 -flto`, **static**, and generic.\
+I'm open to suggestions (as always!), and can try building them for Windows if someone manages to make this BASH script work on Windows.\
+[apngopt](https://apng.sourceforge.io/) [ECT](https://github.com/fhanau/Efficient-Compression-Tool) [MP3Packer](https://hydrogenaud.io/index.php/topic,32379.0.html) 7zz
 
 ## Supported file types
 
@@ -61,35 +63,36 @@ For each file type, I test many and many softwares, and only keep the one(s) pro
 In many case different programs are used one after the other, allowing for the best compression.\
 If you want to know which softwares I tested or more explanations, read the script comments.\
 In the "Behaviour" column, texts in italics are the default behaviour.\
+For easier reading, only the file extensions are listed, even if the script is using their mime-types.\
 Fully supported file types:
 // TODO remove normal/insane from "behaviour" description and add speed.
 
-Extension|Mime-type|Dependencies|Behaviour|*Default*/insane&nbsp;speed
-:---:|:---:|:---:|---|:---:
-`.flac`|`audio/flac` `audio/x‑flac`|`flac`|Uses [reference FLAC encoder](https://github.com/xiph/flac), extract+optimize+remux embedded media files, (*non*-)subset file, remove/*keep* seek-table, remove/*keep* vendor string, *remove*/keep metadata padding, remove/*keep* metadata, *normal*/insane encoding time.|N/A
-`.gz` `.tgz` `.svgz`|`application/gzip` `application/x‑gzip`|`gzip` `ect`|Uses [ECT](https://github.com/fhanau/Efficient-Compression-Tool), extract+optimize+remux, remove/*keep* original filename, *normal*/insane encoding time.|N/A
-`.mp3`|`application/octet‑stream` `audio/mpeg` `audio/mp3` `audio/mpeg3` `audio/x-mpeg‑3`|`mp3packer`|Uses [MP3Packer](https://hydrogenaud.io/index.php/topic,32379.0.html), extract+optimize+remux embedded media files, delete/*write* Xing frame, *remove*/keep metadata padding, remove/*keep* metadata.|N/A
-`.tar` `.cbt`|`application/x-tar` `application/x-cbt`|`tar`|Extract+optimize+remux files. Trust me, there **are** ways to optimize a TAR (without optimizing embedded files themselves). **Umask + owner/group are not preserved.**|N/A
+Extension|Dependencies|Behaviour|*Default*/insane&nbsp;speed
+:---:|:---:|---|:---:
+`.flac`|`flac`|Uses [reference FLAC encoder](https://github.com/xiph/flac), extract+optimize+remux embedded pictures, (*non*-)subset file, remove/*keep* seek-table, remove/*keep* vendor string, *remove* metadata padding, remove/*keep* metadata, *normal*/insane encoding time.|N/A
+`.gz` `.tgz` `.svgz`|`gzip` `ect`|Uses [ECT](https://github.com/fhanau/Efficient-Compression-Tool), extract+optimize+remux, remove/*keep* original filename, *normal*/insane encoding time.|N/A
+`.mp3`|`mp3packer`|Uses [MP3Packer](https://hydrogenaud.io/index.php/topic,32379.0.html), extract+optimize+remux embedded media files, delete/*write* Xing frame, *remove*/keep metadata padding, remove/*keep* metadata.|N/A
+`.tar` `.cbt`|`tar`|Extract+optimize+remux files. Trust me, there **are** ways to optimize a TAR (without optimizing embedded files themselves). ***Umask + owner/group are not preserved.***|N/A
 ---
 Work in progress (already supported, but improvements can be done):
-[]() | []() | []() | []()
-:---:|:---:|:---:|---
-`.jpg`|`image/jpeg`|`ect`|Uses [ECT](https://github.com/fhanau/Efficient-Compression-Tool), remove/keep metadata. I didn't test any other software for now.
-`.pdf`|`application/pdf`|`mupdf‑tools` `qpdf`|Garbage collect unused objects/streams + merge/reuse duplicates + compact cross ref table + recompress Flate streams. No extraction for now (for both images and attached files).
-`.png` `.apng`|`image/png` `image/x‑png` `image/vnd.mozilla.apng`|`ect` `apngopt`|Use [ECT](https://github.com/fhanau/Efficient-Compression-Tool) for PNG and [apngopt](https://apng.sourceforge.io/) for Animated PNG, remove/keep metadata, normal/"insane" encoding time.
-`.zip`| . | . |Segmented archives not supported.
+[]() | []() | []()
+:---:|:---:|---
+`.jpg`|`ect`|Uses [ECT](https://github.com/fhanau/Efficient-Compression-Tool), remove/*keep* metadata. I didn't test any other software for now.
+`.pdf`|`mupdf‑tools` `qpdf`|Garbage collect unused objects/streams + merge/reuse duplicates + compact cross ref table + recompress Flate streams. No extraction for now (for both images and attached files). cpdf & pdfsizeopt needs more test, and I'm willing to extract Deflate objects to compress them with `ect` (in the TODO list).
+`.png` `.apng`|`ect` `apngopt`|Use [ECT](https://github.com/fhanau/Efficient-Compression-Tool) for PNG and [apngopt](https://apng.sourceforge.io/) for Animated PNG, remove/keep metadata, *normal*/insane encoding time. Only apng needs more testing. 
+`.zip` `.zipx`| `ect` `zopfli_mrkrzych00` `7zz` |Segmented archives not supported. Only Deflate ZIP are supported for now. *Normal*/insane encoding time.
 
 
 ## License
 Uses GNU Parallel.\
 I'm "only" the author of this script, no more.\
-Dependencies and plug-ins licenses/copyrights belong to their respective authors.\
-This script is available under *GNU AGPLv3*.
-Any modification/redistribution/use for non-personal purpose MUST link to this GitHub repository, as well as mentionning the changes made. Read the GNU AGPLv3 for further informations.
+Dependencies and plug-ins licenses/copyrights belong to their respective authors.
+
+This BASH script is available under **SSPL** ([Server Side Public License](https://www.mongodb.com/licensing/server-side-public-license)).
+Any modification/redistribution/use for non-personal purpose (even behind a web service) MUST link to this GitHub repository, as well as mentionning the changes made. Read the `LICENSE.txt` for further informations.
 
 ## Donations
 Please consider donating, either to make a request (it will be given priority) or simply to support me. Thanks!
-
 <div align="center">
   
   [![Static Badge](https://img.shields.io/badge/Support_me!-f5af05?style=for-the-badge&logo=PayPal)](https://www.paypal.com/donate/?hosted_button_id=GK4MGMCVRUYZQ)
