@@ -19,10 +19,13 @@ I will read them all :)
 
 I want this program to be compatible with any Linux system, and Android support (using [Termux](https://github.com/termux/)) is planned (as I use it myself).\
 I don't like Windows and don't plan to support it, but if someone knows how to use this script on Windows I'd really like to hear it!
+I guess this script works under WSL, but needs testing and I can't test.
 
 ## Installation
-TODO (I'm thinking of placing everything - rhefo.sh + plug-ins - in a subfolder in PATH, easier to remove things when I drop an add-in).
-Or put everything directly in PATH (plug-ins havin a prefix "rhefo-...") and in the rhefo code add a flag to --uninstall for easier update.
+The download and installation was made as easiest as possible.\
+First download the [dependecies](dependencies) for your system.\
+Then simply download a release with your system architecture.\
+In the releases (**only there**) the add-ins are embedded in the script (which is self-extractable), so you only need *one* file.
 
 ## Usage & examples
 This script will optimize any folder/file inputs given, with the possibility to write outputs to another directory (or optimize inplace).\
@@ -46,13 +49,13 @@ For further help and options, see the output of `rhefo -h` (and it's beautiful w
 As you can see, there are *global options* (starting with `glob`) and type-specific options (starting with `flac`, `png`, ...).
 
 ## Dependencies
-Here is a list of tools used by this script, listed in alphabetical order, easy to copy-paste for downloading (these are ArchLinux packages, name can change between distros).\
+Here is a list of tools used by this script, listed in alphabetical order, easy to copy-paste for downloading (these are ArchLinux packages, name can change between distros - open issues/merge requests if you know the names under other distributions like Ubuntu).\
 The more the formats supported by FFmpeg, the better ! See `ffmpeg-full` in the AUR. FFmpeg is an easy to solution for (de)muxing, but has some drawbacks. Therefore I try as much as possible not to use it, but in order to I have to write BASH code reading and extracting binary data, which takes time.\
 Global dependencies: `bash coreutils ffmpeg findutils grep parallel util-linux`.\
-File type specific dependencies (see the table below): `flac gzip mupdf-tools qpdf tar`
+File type specific dependencies (see the [table below](supported-file-types)): `flac gzip mupdf-tools qpdf tar`
 
-## Plug-ins
-This script also rely on several plug-ins. Since they are not distributed (through package managers), I compile them myself (when needed) and host them here.\
+## Add-ins
+This script also rely on several add-ins. Since they are not distributed (through package managers), I compile them myself (when needed) and host them here.\
 I provide only x86-64 and aarch64, in different branches (TODO). They are all compressed using `upx -9 --ultra-brute` (see [UPX](https://github.com/upx/upx)), compiled with optimizations: `-O3 -flto`, **static**, and generic.\
 I'm open to suggestions (as always!), and can try building them for Windows if someone manages to make this BASH script work on Windows.\
 [apngopt](https://apng.sourceforge.io/) [ECT](https://github.com/fhanau/Efficient-Compression-Tool) [MP3Packer](https://hydrogenaud.io/index.php/topic,32379.0.html) 7zz
@@ -86,7 +89,7 @@ Work in progress (already supported, but improvements can be done):
 ## License
 Uses GNU Parallel.\
 I'm "only" the author of this script, no more.\
-Dependencies and plug-ins licenses/copyrights belong to their respective authors.
+Dependencies and add-ins licenses/copyrights belong to their respective authors (see [Add-ins](add-ins) for links).
 
 This BASH script is available under **SSPL** ([Server Side Public License](https://www.mongodb.com/licensing/server-side-public-license)).
 Any modification/redistribution/use for non-personal purpose (even behind a web service) MUST link to this GitHub repository, as well as mentionning the changes made. Read the `LICENSE.txt` for further informations.

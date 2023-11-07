@@ -333,34 +333,6 @@ compressFile() {	# warning: $1 can be empty
 				ect -9${zipinsane+9999} -quiet -zip --strict --mt-deflate "$tmp"  # using --strict makes sure ECT does not try to optimize archived files (so it will only optimize Deflate compression in ZIP, not files themselves)
 			fi
 			# TODO for apk, do not extract to optimize inside (would require apk-resigner - AUR; + zipalign; + some uncompressed files should stay uncompressed https://stackoverflow.com/q/25425172/13227011)
-				## use my debug key default
-				#APK=$1
-				#KEYSTORE="${2:-$USER_HOME/.android/debug.keystore}"
-				#STOREPASS="${3:-android}"
-				#ALIAS="${4:-androiddebugkey}"
-
-
-				## get the filename
-				#APK_BASENAME=$(basename $APK)
-				#SIGNED_APK="signed_"$APK_BASENAME
-
-				##debug
-				#echo param1 $APK
-				#echo param2 $KEYSTORE
-				#echo param3 $STOREPASS
-				#echo param4 $ALIAS
-
-				## delete META-INF folder
-				#zip -d $APK META-INF/\*
-
-				## sign APK
-				#jarsigner -verbose -sigalg SHA1withRSA -digestalg SHA1 -keystore $KEYSTORE -storepass $STOREPASS $APK $ALIAS
-				##verify
-				#jarsigner -verify $APK
-
-				##zipalign
-				#zipalign -v 4 $APK $SIGNED_APK
-
 
 			# TODO for ZIP and 7z, we should bruteforce different compression method
 			# ZIP: no (solid) block compression, so easier: each file is distinct from the others, so just bruteforce method compression and select the smallest embedded file. Deflate Deflate64 BZip2 LZMA XZ Zstd PPMd and perhaps more
