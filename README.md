@@ -13,7 +13,7 @@ Also, their code must be compiled and therefore is more difficult to modify and 
 The goal of RHEFO is not only to provide an easy way to optimize several file types, but also to allow the user to achieve maximum compression.\
 Some max compression settings need quite a lot of time, thus need a flag to be set (see the output of `rhefo -h`).\
 This script intends to be "easily" editable, and **completely losslessly** (some options allow *lossy* operations on **metadata only**).\
-Please remember that this tool is under active development, and please read the table below in Supported file types (TODO add link) to check for possible unsupported stuffs (like metadata).\
+Please remember that this tool is under active development, and please read the table below in [supported file types](#supported-file-types) to check for possible unsupported stuffs (like metadata).\
 For any question, file type support request, or if you find a way to produce a smaller file, feel free to open an issue!\
 I will read them all :)
 
@@ -23,7 +23,7 @@ I guess this script works under WSL, but needs testing and I can't test.
 
 ## Installation
 The download and installation was made as easiest as possible.\
-First download the [dependecies](dependencies) for your system.\
+First download the [dependencies](#dependencies) for your system.\
 Then simply download a release with your system architecture.\
 In the releases (**only there**) the add-ins are embedded in the script (which is self-extractable), so you only need *one* file.
 
@@ -52,7 +52,7 @@ As you can see, there are *global options* (starting with `glob`) and type-speci
 Here is a list of tools used by this script, listed in alphabetical order, easy to copy-paste for downloading (these are ArchLinux packages, name can change between distros - open issues/merge requests if you know the names under other distributions like Ubuntu).\
 The more the formats supported by FFmpeg, the better ! See `ffmpeg-full` in the AUR. FFmpeg is an easy to solution for (de)muxing, but has some drawbacks. Therefore I try as much as possible not to use it, but in order to I have to write BASH code reading and extracting binary data, which takes time.\
 Global dependencies: `bash coreutils ffmpeg findutils grep parallel util-linux`.\
-File type specific dependencies (see the [table below](supported-file-types)): `flac gzip mupdf-tools qpdf tar`
+File type specific dependencies (see the [table below](#supported-file-types)): `flac gzip mupdf-tools qpdf tar`
 
 ## Add-ins
 This script also rely on several add-ins. Since they are not distributed (through package managers), I compile them myself (when needed) and host them here.\
@@ -89,7 +89,7 @@ Work in progress (already supported, but improvements can be done):
 ## License
 Uses GNU Parallel.\
 I'm "only" the author of this script, no more.\
-Dependencies and add-ins licenses/copyrights belong to their respective authors (see [Add-ins](add-ins) for links).
+Dependencies and add-ins licenses/copyrights belong to their respective authors (see [Add-ins](#add-ins) for links).
 
 This BASH script is available under **SSPL** ([Server Side Public License](https://www.mongodb.com/licensing/server-side-public-license)).
 Any modification/redistribution/use for non-personal purpose (even behind a web service) MUST link to this GitHub repository, as well as mentionning the changes made. Read the `LICENSE.txt` for further informations.
