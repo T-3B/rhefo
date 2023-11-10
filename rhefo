@@ -111,10 +111,9 @@ Do not let me think I wrote these comments for nothing :´)
 
 If you think the script is taking too much time, do not hesitate to hit Ctrl+C!
 The first Ctrl+C will tell RHEFO to not start any new job and to gently finish
-currently running jobs (all temp files are cleaned). The second will stop all
-jobs brutally, and information about already processed files will be shown in
-less than a second (temp files are NOT cleaned, and there could be a lot).   # TODO check brutally and there/they
-
+currently running jobs (all temp files are cleaned). The second will abruptly
+stop all jobs, and information on files already processed will be displayed in
+less than a second (temp files are NOT cleaned, and there may be many of them).
 
 Examples of usage:
 # optimize recursively current dir, inplace
@@ -186,6 +185,7 @@ parseArgs() {  # not using `local` vars because this fct is only exectued once
 	[ -v globoutput ] && { for i do [ -d "$i" ] && ([ "${globoutput#$(realpath "$i")}" = "$globoutput" ] || error "The --glob-output folder can't be inside an input folder."; cd -- "$i"; find -type d -exec mkdir -p "$globoutput/$(basename "$(realpath "$i")")/{}" \;); done;}
 	# get absolute path, find all files (print size, filepath, input folderpath), sort (biggest size first), compress in parallel
 	realpath -z -- "$@" | xargs -0i find '{}' -type f ${globfilemask+-name "$globfilemask"} -printf '%s\0%P\0%H\0' | perl -0ne 'push @rec, $_; if ($#rec == 2) { push @items, join("", @rec); @rec = (); } END { print(join("", sort { $b <=> $a } @items)) }' | parallel -0L3 --lb --bar compressFile {2} {3} {1} 1 &
+	blabla=$!
 	# Thanks for the people helping me finding a way to sort by filesize (sorting by group of 3 elements): https://stackoverflow.com/a/76028193/13227011
 	wait; wait  # wait twice as we can hit Ctrl+C twice (1st hit: no new job, 2nd: kill); 1st Ctrl+C kills the first wait
 	# TODO don't compressFile duplicates (explicitly twice same input or implicitely - with the file and the parent folder)
@@ -461,14 +461,15 @@ warning() { printf "\033[1;33mW: $1\033[0m\n" >&2;}
 error() { printf "\033[1;31mE: $1\033[0m\n" >&2; exit ${2:-1};}
 
 ctrlCHandler() {
-  if [ -v noNewJobs ]; then
-	kill $! 2>/dev/null  # we could add `exit 130`, but it's better to only kill `parallel` so we can print information about already processed files (which is done really fast)
-  else
-	kill -HUP $! 2>/dev/null  # TODO send the signal to parallel subcalls
-    noNewJobs=
-    sleep .1  # so the following msg will be shown *after* parallel's output about no new job
-	printf "\r%${COLUMNS}s\r\033[1;36mHit Ctrl+C again to stop all jobs.\033[0m\n" ''  # erase progress bar from parallel, then print msg
-  fi
+	if [ -v noNewJobs ]; then
+		echo $! $blabla
+		kill $! 2>/dev/null  # we could add `exit 130`, but it's better to only kill `parallel` so we can print information about already processed files (which is done really fast)
+	else
+		noNewJobs=
+		kill -HUP $(pstree -ap $$ | grep parallel | grep -oP '^.*?\K[0-9]+')  # do NOT start any new job in any `parallel` (even grandchild processes)
+		sleep .1  # so the following msg will be shown *after* parallel's output about no new job
+		printf "\r%${COLUMNS}s\r\033[1;36mHit Ctrl+C again to stop all jobs.\033[0m\n" ''  # erase progress bar from parallel, then print msg
+	fi
 }
 
 # Set up the Ctrl+C signal handler
