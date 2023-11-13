@@ -13,6 +13,7 @@
 #	Tested on a dozen .gz and .zip files (< 1MiB).
 #	- defluff: can gain a few bytes (max 3) instantly after `ect -9 --mt-deflate` on rare cases (can be beaten with `ect -99999`), some times (more common) it adds a byte to the deflate-compressed stream, and most of the time no diff
 #	- DeflOpt.exe: silently drops empty files from zip, never bigger output. In rare cases a few bytes (max 3) are saved (instantly again), but increasing ect's iterations beats it. Big issue: windows program.
+#	for APNG, defluff can save about 0.07% of filesize instantly. I prefer to avoid these tools.
 
 # for `dd`, if writing to existing output file, `dd status=none bs=4 count=1 seek=6 conv=notrunc oflag=seek_bytes iflag=fullblock of="$tmp"`
 
@@ -171,6 +172,7 @@ parseArgs() {  # not using `local` vars because this fct is only exectued once
 		shift
 	done
 	(($#)) || error 'No input given. See the help message `rhefo -h`.'
+	for i do [ -r "$i" ] || error "Input '$i' does not exist or cannot read it."; done
 
 	printf '0\n0\n0\n' >"${globstatsfile=$(mktemp -p"$globtmp" rhefo_${version}_tmpXXX)}"  # file where stats are wrote - to allow edit in subshells since we use `parallel`; 1st line is saved bytes, 2nd is input files size, 3rd is nbr input files
 
@@ -180,7 +182,6 @@ parseArgs() {  # not using `local` vars because this fct is only exectued once
 	dd status=none bs=4k iflag=fullblock iflag=skip_bytes skip=$((6+$(grep -bm1 '^#EOF#$' "$(realpath -- "$BASH_SOURCE")" | cut -f1 -d:))) <"$(realpath -- "$BASH_SOURCE")" | base64 -d | tar xC "$addinsDir"
 	chmod -R +x "$addinsDir"
 
-	for i do [ -r "$i" ] || error "Input '$i' does not exist or cannot read it."; done
 	# create all the dir-tree to output folder
 	[ -v globoutput ] && { for i do [ -d "$i" ] && ([ "${globoutput#$(realpath "$i")}" = "$globoutput" ] || error "The --glob-output folder can't be inside an input folder."; cd -- "$i"; find -type d -exec mkdir -p "$globoutput/$(basename "$(realpath "$i")")/{}" \;); done;}
 	# get absolute path, find all files (print size, filepath, input folderpath), sort (biggest size first), compress in parallel
@@ -261,7 +262,7 @@ compressFile() {	# warning: $1 can be empty
 	[[ $4 && -v globoutput ]] && out=$globoutput/${2##*/}${1:+/$1}
 	[[ $4 && -v globprefix ]] && out=${out%/*}/$globprefix${out##*/}
 	[[ $4 && (-v globoutput || -v globprefix) && ! -v globupdate && -e "$out" ]] && { warning "'$out' already exists, file not compressed nor updated. Rerun with -y to overwrite files in output directory.";rm -f "$tmp";return;}
-	cp "$in" "$tmp"
+	cp "$in" "$tmp"  # TODO remove this and insert it in each switch case (since we need to read it once, read it when needed - and run directly a command with the processed data)
 	size=${3-$(wc -c <"$tmp")}
 	tmpname=${tmp##*/}
 	tmp2=${tmp%/*}/0$tmpname  # needs sometimes TODO check if can delete it (not use tmp2 anymore), since we have the certitude that in!=tmp
@@ -419,18 +420,16 @@ compressFile() {	# warning: $1 can be empty
 			;;
 		image/png | image/x-png | image/vnd.mozilla.apng)
 			# Tested software: ECT, zopflipng_mrkrzych00; zopflipng_mrkrzych00 -y -m --iterations=999 --slowfix --all --lossy_transparent --alpha_cleaners=bhvapw --pass=999 in out
-			# TODO apngopt can sometimes do lossy things (iirc it will change the pixels to rgba(pc))
+			# ECT is the best Deflate encoder (looking at compression ratio only), so the only way to beat it is to bruteforce even more filters than `ect --allfilters-b --pal_sort=120` (not using this as it takes ages), but then if we find a better filter we could run ect on it and it will reuse the filter if gives better ratio
+			# TODO apngopt can sometimes do lossy things (iirc it will change the pixels to rgba(pc)) ?
 			# TODO remove useless alpha channel
 			if [ $(ffprobe -v warning -show_entries stream=codec_name -of default=nk=1:nw=1 "$tmp") = apng ]
-			then # ect -1 ${globstrip+-strip} "$tmp"  # TODO 
-				mv "$tmp" "$tmp2"
-				apngopt -z2 -i99${pnginsane+999} "$tmp2" "$tmp"  # TODO to do better, we could split frames, use ECT --reuse, them remux. Or change ect source code to support apng
-				# TODO try defluff as it supports apng
+			then # ect -1 ${globstrip+-strip} "$tmp"  # TODO (cannot strip using ECT since it drops all other frames - only 1st one is kept)
+				apngopt -z2 -i99${pnginsane+999} "$in" "$tmp" >/dev/null  # TODO to do better, we could split frames, use ECT --reuse, them remux
 			else mv "$tmp" "$tmp.png"
 				ect -9${pnginsane+9999} --mt-deflate -quiet ${globstrip+-strip} "$tmp.png"  # ect needs correct extension
-				# TODO use -99999 --allfilters-b --pal_sort=120 if 256² or smaller and if pnginsane
 				mv "$tmp.png" "$tmp"
-			fi;;  # TODO add $globbruteforce, to add `` to ECT
+			fi;;
 		image/webp)  # only tested cwebp; cwebp -z9 is NOT always the smallest one! Therefore just bruteforce -z (which is an alias for -m and -q options)
 			parallel cwebp -quiet -lossless -alpha_filter best -metadata all -z {} "$tmp" -o "$tmp".{} ::: {0..9}
 			catchSmallestFile "$tmp".*;;
