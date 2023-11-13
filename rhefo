@@ -449,7 +449,6 @@ compressFile() {	# warning: $1 can be empty
 	fi
 }
 
-# TODO subcalls to parallel (for example in this fct) won't print errors and warning in realtime (it will wait for the whole ZIP to be treated) # UPDATE: I added --lb, see if it fixed the issue
 # only one argument, the folder where we extracted the archive contents
 compressTmpFolder() {
 	find "$1" -type f -printf '%s\0%P\0%H\0' | perl -0ne 'push @rec, $_; if ($#rec == 2) { push @items, join("", @rec); @rec = (); } END { print(join("", sort { $b <=> $a } @items)) }' | parallel -0L3 --lb compressFile {2} {3} {1}
@@ -466,7 +465,7 @@ ctrlCHandler() {
 		noNewJobs=
 		kill -HUP $(pstree -ap $$ | grep parallel | grep -oP '^.*?\K[0-9]+') 2>/dev/null  # do NOT start any new job in any `parallel` (even grandchild processes)
 		sleep .1  # so the following msg will be shown *after* parallel's output about no new job
-		printf "\r%${COLUMNS}s\r\033[1;36mHit Ctrl+C again to stop all jobs.\033[0m\n" ''  # erase progress bar from parallel then print msg
+		printf "\r%${COLUMNS}s\r\033[1;36mHit Ctrl+C again to stop all jobs.\033[0m\n" ''  # erase progress bar from parallel, then print msg
 	fi
 }
 
