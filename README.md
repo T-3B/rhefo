@@ -18,8 +18,7 @@ For any question, file type support request, or if you find a way to produce a s
 I will read them all :)
 
 I want this program to be compatible with any Linux system, and Android support (using [Termux](https://github.com/termux/)) is planned (as I use it myself).\
-I don't like Windows and don't plan to support it, but if someone knows how to use this script on Windows I'd really like to hear it!
-I guess this script works under WSL, but needs testing and I can't test.
+For Windows, I guess this script works under WSL, but needs testing and I can't test.
 
 ## Installation
 The download and installation was made as easiest as possible.\

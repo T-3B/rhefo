@@ -388,26 +388,28 @@ compressFile() {	# warning: $1 can be empty
 			# MP3Packer will write "mp3packer2.04-268\n" in the needed *padding* of frames, removing them break the file (as they're needed). We could remove the padding only at the COMPLETELY end of file, even if FFmpeg decode it fine (and same checksum), some softwares will report an error (and if after removing the padding we reuse MP3Packer on it, boom the checksum does not match anymore!!!)
 			# TODO change ffmpeg to another software, because convert ID3 tags to TXXX (comment: https://trac.ffmpeg.org/ticket/8996; lyrics: https://trac.ffmpeg.org/ticket/8795; perhaps others); the good thing with ffmpeg is: it can remove ID3 completely, it will convert IDv1 to IDv2, it will use UTF-8 (instead of heavier UTF-16), can remove Xing frame
 			#ffCompressStreams "$tmp" mp3  # TODO see if works and doesn't add metadata for example
-			mp3packer -z --workers 1 "$tmp" "$tmp2" >/dev/null  # mp3packer always adds a Xing/LAME frame
-			ffmpeg -v error -y -i "$tmp2" -map 0 -c copy -fflags +bitexact -write_xing 0 -metadata_header_padding 10 ${globstrip+-id3v2_version 0 -map_metadata -1} "$tmp";  # FFmpeg 6.0 will ALWAYS write at least 10 bytes of padding (even if no ID3 metadata), so I use 10 padding too to prevent unpleasant surprise in the future
-			if ! [ -v globstrip ]
-			then if ((v=(0x$(getBytes "$tmp" 6)<<21|0x$(getBytes "$tmp" 7)<<14|0x$(getBytes "$tmp" 8)<<7|0x$(getBytes "$tmp" 9))-10)) # Easier to do the test after 1st ffmpeg command: if ID3 length is not 10 then trim, otherwise remove completely ID3 (since there is only padding).
-				then { dd status=none bs=6 count=1 iflag=fullblock; printf $(printf '\\x%x' $((v>>21)) $((v>>14&127)) $((v>>7&127)) $((v&127))); dd status=none bs=$v count=1 iflag=fullblock iflag=skip_bytes skip=4; dd status=none bs=4k iflag=fullblock iflag=skip_bytes skip=10;} <"$tmp" >"$tmp2"  # will remove the 10 bytes padding; ID3v2 length is big-endian
-				else ffmpeg -v error -y -i "$tmp" -map 0 -c copy -fflags +bitexact -write_xing 0 -id3v2_version 0 "$tmp2"
+			# TODO compress album arts (idk if we can embed something else)
+			# TODO remove FFmpeg by more binary BASH logic, keep in mind that FFmpeg is only great for the UTF-16 → UTF-8 conversion and Xing frame removal
+			mp3packer -z --workers 1 "$in" "$tmp" >/dev/null  # mp3packer always adds a Xing/LAME frame
+			ffmpeg -v error -y -i "$tmp" -map 0 -c copy -fflags +bitexact -write_xing 0 -metadata_header_padding 10 "$tmp2";  # FFmpeg 6.0 will ALWAYS write at least 10 bytes of padding (even if no ID3 metadata), so I use 10 padding too to prevent unpleasant surprise in the future
+			if [ -v globstrip ]
+			then mp3packer -s -t  "$tmp2" "$tmp"  # remove every thing that's not the MP3 stream itself
+			else if ((v=(0x$(getBytes "$tmp2" 6)<<21|0x$(getBytes "$tmp2" 7)<<14|0x$(getBytes "$tmp2" 8)<<7|0x$(getBytes "$tmp2" 9))-10)) # Easier to do the test after 1st ffmpeg command: if ID3 length is not 10 then trim, otherwise remove completely ID3 (since there is only padding).
+				then { dd status=none bs=6 count=1 iflag=fullblock; printf $(printf '\\x%x' $((v>>21)) $((v>>14&127)) $((v>>7&127)) $((v&127))); dd status=none bs=$v count=1 iflag=fullblock iflag=skip_bytes skip=4; dd status=none bs=4k iflag=fullblock iflag=skip_bytes skip=10;} <"$tmp2" >"$tmp"  # will remove the 10 bytes padding; ID3v2 length is big-endian
+				else ffmpeg -v error -y -i "$tmp2" -map 0 -c copy -fflags +bitexact -write_xing 0 -id3v2_version 0 "$tmp"
 				fi
-				mv "$tmp2" "$tmp"
 			fi
 			# use mp3packer to add Xing frame (with real duration) of 208 bytes (ffmpeg Xing frame is 522), could be even smaller than 208 bytes if I create it myself (since strings "mp3packer" or "Lavf" are written to Xing)
 			[ -v mp3lossy ] || mp3packer -u "$tmp" "$tmp2" >/dev/null;;
 		image/jpeg)
-			#mozjpeg is better at recompressing jpgs then ECT due to some weird overhead ECT adds.
+			#mozjpeg is better at recompressing jpgs then ECT due to some weird overhead ECT adds.  TODO
 				#assume a possible 1-2kb gain
 			
 			mv "$tmp" "$tmp.jpg"
-			ect -9 -quiet ${globstrip+-strip} "$tmp.jpg"  # ect needs correct ext, and TODO test if others are better than ECT for this
+			ect -9 -quiet ${globstrip+-strip} "$tmp.jpg"  # ect needs correct ext
 			mv "$tmp.jpg" "$tmp";;
 		image/jxl)
-			# TODO, smaller effort might sometimes compress better; -e 10 needs libjxl 0.8.0
+			# -e 10 needs libjxl 0.8.0
 			# cjxl -e 9 -d 0 --brotli_effort=11 --num_threads=0 -I 100 -g 3 -E 11
 			# bruteforcing some settings will compress better (-g 1..3, --patches, ...): https://github.com/libjxl/libjxl/issues/426#issuecomment-898962219
 			# -e 10 will actually really bruteforce everything/every flag, no need for more than `-e 10 --allow_expert_options` (if cjxl uses more than 1 thread, no impact on the size) (more args is completely useless)
@@ -421,7 +423,8 @@ compressFile() {	# warning: $1 can be empty
 		image/png | image/x-png | image/vnd.mozilla.apng)
 			# Tested software: ECT, zopflipng_mrkrzych00; zopflipng_mrkrzych00 -y -m --iterations=999 --slowfix --all --lossy_transparent --alpha_cleaners=bhvapw --pass=999 in out
 			# ECT is the best Deflate encoder (looking at compression ratio only), so the only way to beat it is to bruteforce even more filters than `ect --allfilters-b --pal_sort=120` (not using this as it takes ages), but then if we find a better filter we could run ect on it and it will reuse the filter if gives better ratio
-			# TODO apngopt can sometimes do lossy things (iirc it will change the pixels to rgba(pc)) ?
+			# TODO can apngopt can sometimes do lossy things (iirc it will change the pixels to rgba(pc)) ?
+			
 			# TODO remove useless alpha channel
 			if [ $(ffprobe -v warning -show_entries stream=codec_name -of default=nk=1:nw=1 "$tmp") = apng ]
 			then # ect -1 ${globstrip+-strip} "$tmp"  # TODO (cannot strip using ECT since it drops all other frames - only 1st one is kept)
@@ -442,7 +445,7 @@ compressFile() {	# warning: $1 can be empty
 	rm -f "$tmp2"
 	[ -v globkeeptime ] && touch -md"$mtime" "$tmp" && touch -ad"$atime" "$tmp"
 	if [ $4 ]
-	then sem --id globstatsfile 'set -- $(<"$globstatsfile"); printf "$(('$size'+$1))\n$(('$3'+$2))\n$((1+$3))" >"$globstatsfile"'  # use a semaphore to allow only one thread to write at a time 
+	then sem --id "$globstatsfile" 'set -- $(<"$globstatsfile"); printf "$(('$size'+$1))\n$(('$3'+$2))\n$((1+$3))" >"$globstatsfile"'  # use a semaphore to allow only one thread to write at a time; TODO test if id can have spaces and fancy chars
 		[[ -v globoutput && ! -v globupdate && -e "$out" ]] && { warning "'$out' already exists, not updated. Compressed version here: '$tmp'";} || { mv "$tmp" "$out"; chown -f --reference="$in" "$out"; chmod -f --reference="$in" "$out";}
 	else mv "$tmp" "$out"
 	fi
