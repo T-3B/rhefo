@@ -17,6 +17,7 @@
 
 # for `dd`, if writing to existing output file, `dd status=none bs=4 count=1 seek=6 conv=notrunc oflag=seek_bytes iflag=fullblock of="$tmp"`
 
+# features to add, fixes needed, etc are written with a 'TODO' in capital letters; 'todo' is written for stuff to change with very very low priority (mainly a nice thing to have, but almost useless because too rare), everything completely works without issues even with 'todo'
 
 # TODO add globarchnoroot to remove root folder if there is only one folder
 # TODO add option to remove __MACOSX folder from inside archives add to globarch-lossy
@@ -46,7 +47,6 @@ tested (and I do NOT know if the script will work or "break" your machine)!
 
 Usage: `rhefo [options] [--] INPUT [INPUT ...]`
 INPUT can be folder or file, and several INPUTs can be given.
-Any path given to this script can be relative or absolute.
 
 List of options (global ones first, then grouped by file type):
 --help | -h
@@ -267,7 +267,7 @@ compressFile() {	# warning: $1 can be empty
 	tmpname=${tmp##*/}
 	tmp2=${tmp%/*}/0$tmpname  # needs sometimes TODO check if can delete it (not use tmp2 anymore), since we have the certitude that in!=tmp
 
-	# TODO if mime=application/octet-stream, use FFmpeg to try to get the container name
+	# TODO if mime=application/octet-stream, use FFmpeg to try to get the container name (or use a file mapping filextensions to mime-type)
 	case $(file -b --mime-type "$tmp") in  # see here for known MIME types: /usr/share/mime/types
 		application/gzip | application/x-gzip)
 			# tested tools: zopfli, zopfli MrKrzYch00's mod, gzip, 7z, minigzip (from minizip-ng). Tested on all files from silesia.tar (ect is far faster than zopfli(mod), and always gives smaller files - even when file is 1KB; ECT << zopfli < zopfli_mrkrzych00 << gzip); zopfli_mrkrzych00 --i9999 --mui999 --slowfix --t0 --pass9 --all androidsdk.svg
@@ -317,8 +317,8 @@ compressFile() {	# warning: $1 can be empty
 			
 			# TODOOOOOOO input archived files do not keep their orig date
 			v=$(mktemp -dp"$globtmp")
-			p=$(zipdetails "$tmp" | grep Compression\ Method | grep -vce "0008 'Deflated'" -e "0000 'Stored'")
-			7z x "$tmp" -o"$v" >/dev/null  # TODO what about replacing 7z by 7zz ?
+			p=$(zipdetails "$tmp" | grep Compression\ Method | grep -vce "0008 'Deflated'" -e "0000 'Stored'")  # count all embedded files stored in another method than Deflate or Store
+			7zz x "$tmp" -o"$v" >/dev/null
 			rm "$tmp"
 			[ -v globarchnorecur ] || compressTmpFolder "$v"
 			if [ -v zipnodeflate ] || ((p))
@@ -357,20 +357,19 @@ compressFile() {	# warning: $1 can be empty
 			
 			if [ -v globstrip ]
 			then metaflac --remove-all "$tmp"
-			else  # we extract each pictures, AND each block of PICTURE type then remove these block from the file; later we update the individual blocks and insert them back
-				metaflac --list --block-type=PICTURE "$tmp" | grep ^METADATA | while read -r p  # TODO compress pictures in parallel
-					do a=$(mktemp -p. XXX)
-						metaflac --block-number=${p#*#} --export-picture-to=$a "$tmp"
-						metaflac --block-number=${p#*#} --list --data-format=binary "$tmp" >$a.block  # re-use `a` name, a new mktemp would be overkill imo: $a.block unlikely to already exist (and if it exists, wasn't created by this script)
-						metaflac --block-number=${p#*#} --remove "$tmp"
-						v=$(wc -c <$a)
-						compressFile "$globtmp"/$a
-						p=$(wc -c <$a)
-						{ intToBytes $((0x$(getBytes '' 0 4)-v+p)) 4; head -c $(($(wc -c <$a.block)-v-8)); intToBytes $p 4; cat $a;} <$a.block >$a.blockNew  # taking the first 4 bytes as block length even if the first one isn't, easier to implement and works. We update block length, image data length and image data.
-						# now the $a.blockNew contains the opt picture, with correct size. TODO Colors (the 4 bytes just before pic size) could be changed for example by ECT. Colors are the number of indexed colors; tried and everything works on PC if it's not updated; we could use `identify -verbose "$tmp"` and look at "Colormap entries:", if not in output then not indexed (at least for PNG), would add a dependency I don't want. Could also remove all block from FLAC, try to import pic and let FLAC figure it out (Colors) for me then copy (too much work for what it brings)
-						metaflac --append "$tmp" <$a.blockNew
-						rm $a $a.block{,New}
-					done
+			else metaflac --list --block-type=PICTURE "$tmp" | grep ^METADATA | while read -r p  # we extract each pictures, AND each block of PICTURE type then remove these block from the file; later we update the individual blocks and insert them back;;; todo compress pictures in parallel
+				do a=$(mktemp -p"$globtmp" XXX)
+					metaflac --block-number=${p#*#} --export-picture-to=$a "$tmp"
+					metaflac --block-number=${p#*#} --list --data-format=binary "$tmp" >$a.block
+					metaflac --block-number=${p#*#} --remove "$tmp"
+					v=$(wc -c <$a)
+					compressFile "$globtmp"/$a  # ok because we compress file based on mime-type (not extension)
+					p=$(wc -c <$a)
+					{ intToBytes $((0x$(getBytes '' 0 4)-v+p)) 4; head -c $(($(wc -c <$a.block)-v-8)); intToBytes $p 4; cat $a;} <$a.block >$a.blockNew  # taking the first 4 bytes as block length even if the first one isn't, easier to implement and works. We update block length, image data length and image data.
+					# now the $a.blockNew contains the opt picture, with correct size. todo Colors (the 4 bytes just before pic size) could be changed for example by ECT. Colors are the number of indexed colors; tried and everything works on PC if it's not updated; we could use `identify -verbose "$tmp"` and look at "Colormap entries:", if not in output then not indexed (at least for PNG), would add a dependency I don't want. Could also remove all block from FLAC, try to import pic and let FLAC figure it out (Colors) for me then copy (too much work for what it brings)
+					metaflac --append "$tmp" <$a.blockNew  # TODO add blocks back only after FLAC stream optimization (so do the compressFile in background)
+					rm $a $a.block{,New}
+				done
 			fi
 			flac "$tmp" -smepfb 4096 -P 0 -r ${flacsubset+8 -l $(($(metaflac --show-sample-rate "$tmp")>48000?32:12))}${flacsubset-15 -l 32 --lax} -A subdivide_tukey\(4${flacinsane+0}\)
 			if [ -v flaclossy ]
@@ -393,8 +392,8 @@ compressFile() {	# warning: $1 can be empty
 			mp3packer -z --workers 1 "$in" "$tmp" >/dev/null  # mp3packer always adds a Xing/LAME frame
 			ffmpeg -v error -y -i "$tmp" -map 0 -c copy -fflags +bitexact -write_xing 0 -metadata_header_padding 10 "$tmp2";  # FFmpeg 6.0 will ALWAYS write at least 10 bytes of padding (even if no ID3 metadata), so I use 10 padding too to prevent unpleasant surprise in the future
 			if [ -v globstrip ]
-			then mp3packer -s -t  "$tmp2" "$tmp"  # remove every thing that's not the MP3 stream itself
-			else if ((v=(0x$(getBytes "$tmp2" 6)<<21|0x$(getBytes "$tmp2" 7)<<14|0x$(getBytes "$tmp2" 8)<<7|0x$(getBytes "$tmp2" 9))-10)) # Easier to do the test after 1st ffmpeg command: if ID3 length is not 10 then trim, otherwise remove completely ID3 (since there is only padding).
+			then mp3packer -s -t  "$tmp2" "$tmp"  >/dev/null  # remove every thing that's not the MP3 stream itself
+			else if ((v=(0x$(getBytes "$tmp2" 6)<<21|0x$(getBytes "$tmp2" 7)<<14|0x$(getBytes "$tmp2" 8)<<7|0x$(getBytes "$tmp2" 9))-10))  # Easier to do the test after 1st ffmpeg command: if ID3 length is not 10 then trim, otherwise remove completely ID3 (since there is only padding).
 				then { dd status=none bs=6 count=1 iflag=fullblock; printf $(printf '\\x%x' $((v>>21)) $((v>>14&127)) $((v>>7&127)) $((v&127))); dd status=none bs=$v count=1 iflag=fullblock iflag=skip_bytes skip=4; dd status=none bs=4k iflag=fullblock iflag=skip_bytes skip=10;} <"$tmp2" >"$tmp"  # will remove the 10 bytes padding; ID3v2 length is big-endian
 				else ffmpeg -v error -y -i "$tmp2" -map 0 -c copy -fflags +bitexact -write_xing 0 -id3v2_version 0 "$tmp"
 				fi
@@ -445,7 +444,7 @@ compressFile() {	# warning: $1 can be empty
 	rm -f "$tmp2"
 	[ -v globkeeptime ] && touch -md"$mtime" "$tmp" && touch -ad"$atime" "$tmp"
 	if [ $4 ]
-	then sem --id "$globstatsfile" 'set -- $(<"$globstatsfile"); printf "$(('$size'+$1))\n$(('$3'+$2))\n$((1+$3))" >"$globstatsfile"'  # use a semaphore to allow only one thread to write at a time; TODO test if id can have spaces and fancy chars
+	then sem --fg --id "$globstatsfile" 'set -- $(<"$globstatsfile"); printf "$(('$size'+$1))\n$(('$3'+$2))\n$((1+$3))" >"$globstatsfile"'  # use a semaphore to allow only one thread to write at a time; TODO test if id can have spaces and fancy chars
 		[[ -v globoutput && ! -v globupdate && -e "$out" ]] && { warning "'$out' already exists, not updated. Compressed version here: '$tmp'";} || { mv "$tmp" "$out"; chown -f --reference="$in" "$out"; chmod -f --reference="$in" "$out";}
 	else mv "$tmp" "$out"
 	fi
