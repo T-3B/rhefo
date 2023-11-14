@@ -479,4 +479,3 @@ trap 'ctrlCHandler' INT
 exit
 # add-ins encoded in base64 below this eof line (could append them in binary data, smaller file but many text editors don't support NULL bytes)
 #EOF#
-lblablablablablabl
