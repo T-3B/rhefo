@@ -60,6 +60,8 @@ List of options (global ones first, then grouped by file type):
   if set, all "insane" flags are set too (no quality/compatibility loss)
   to "compress" better, consider --glob-lossy (only for lossy metadata)
   compatibility-break and lossy flags are NOT set; TAKES A LOT OF TIME!!!
+--glob-jobs=<N> | -j<N>
+  <N> files are optimized in parallel; default: same as --glob-threads
 --glob-keeptime | -k
   if set, input access and modification times are kept
 --glob-lossy | -l	better compression, lossy
@@ -73,9 +75,9 @@ List of options (global ones first, then grouped by file type):
   Prefix to add to all processed files (--blob-output can still be used)
 --glob-strip | -s	better compression, lossy
   if set, strip/remove ALL metadata/exif; see the less aggressive --glob-lossy
---glob-threads=<N> | -j<N>
-  <N> is the number of logic processors used by this script; default: all
---glob-tmp=<path> | -t <path>
+--glob-threads=<N> | -t<N>
+  <N> logic processors used by this script; default: all (see --glob-jobs)
+--glob-tmp=<path> <path>
   <path> is a directory intensively used for r/w; default is `/dev/shm`
   if does not exist, or cannot r/w in it, defaults to `/tmp`
 --glob-update | -y
@@ -138,7 +140,7 @@ find -name "*.flac" -type f -print0 | xargs -0 rhefo -s' |\
 parseArgs() {  # not using `local` vars because this fct is only exectued once
 	[ $(printf '\1' | od -dAn) = 1 ] || { printf 'This script was not tested on BIG ENDIAN devices. I mainly use `printf %x` with\nnumbers of up to 4 bytes.\nPLEASE, open an issue and if you have time HELP ME supporting this architecture\nby simply testing! This would really help a lot, since I only have little-endian\ndevices. Seriously, please.\n'; exit 1;}
 	getopt -T && { error 'Your `getopt` is not compatible with this script. Open an issue.' 4;}
-	args=$(getopt -o hm:9klno:p:sj:t:y -l help,glob-archnorecur,glob-filemask:,glob-insane,glob-keeptime,glob-lossy,glob-output:,glob-prefix:,glob-strip,glob-threads:,glob-tmp:,glob-update,flac-insane,flac-lossy,flac-subset,gzip-insane,gzip-lossy,mp3-lossy,png-insane,zip-insane -n rhefo -s bash -- "$@")
+	args=$(getopt -o hm:9j:klno:p:st:y -l help,glob-archnorecur,glob-filemask:,glob-insane,glob-jobs:,glob-keeptime,glob-lossy,glob-output:,glob-prefix:,glob-strip,glob-threads:,glob-tmp:,glob-update,flac-insane,flac-lossy,flac-subset,gzip-insane,gzip-lossy,mp3-lossy,png-insane,zip-insane -n rhefo -s bash -- "$@")
 	(($?)) && error 'Could not parse args. See the help message `rhefo -h`.'
 	globtmp=/dev/shm
 	eval set -- "$args"
@@ -149,13 +151,14 @@ parseArgs() {  # not using `local` vars because this fct is only exectued once
 			--glob-archnorecur)		globarchnorecur=;;
 			-m | --glob-filemask)	[ "$2" ] || error "Filemask is empty."; globfilemask=$2; shift;;
 			-9 | --glob-insane)		flacinsane=;gzipinsane=;pnginsane=;zipinsane=;;
+			-j | --glob-jobs)		((0<$2)) || error "Wrong jobs int: '$2'."; globjobs=$2; shift;;
 			-k | --glob-keeptime)	globkeeptime=;;
 			-l | --glob-lossy)		gziplossy=;flaclossy=;mp3lossy=;;
 			-o | --glob-output) 	[[ -d "$2" || -w "$2" ]] || error "Output directory '$2' does not exist or cannot write to it."; globoutput=$(realpath "$2" 2>/dev/null); shift;;
 			-p | --glob-prefix)		[ "$2" ] || error 'Prefix is empty.'; globprefix=$2; shift;;
 			-s | --glob-strip)		globstrip=;gziplossy=;flaclossy=;mp3lossy=;;
-			-j | --glob-threads)	((0<$2 && $(nproc --all)>=$2)) || error "Wrong threads int: '$2'."; taskset -acp 0$((-$2+1)) $$ >/dev/null; shift;;  # restrict this script to use the first <N> processors
-			-t | --glob-tmp)		[[ -d "$2" && -r "$2" && -w "$2" ]] && globtmp=$(realpath "$2") || { warning 'Could not use given --glob-tmp, using "/tmp" instead.'; globtmp=/tmp;}; shift;;
+			-t | --glob-threads)	((0<$2 && $(nproc --all)>=$2)) || error "Wrong threads int: '$2'."; taskset -acp 0$((-$2+1)) $$ >/dev/null; shift;;  # restrict this script to use the first <N> processors
+			--glob-tmp)				[[ -d "$2" && -r "$2" && -w "$2" ]] && globtmp=$(realpath "$2") || { warning 'Could not use given --glob-tmp, using "/tmp" instead.'; globtmp=/tmp;}; shift;;
 			-y | --glob-update)		globupdate=;;
 			--flac-insane)			flacinsane=;;
 			--flac-lossy)			flaclossy;;
@@ -185,7 +188,7 @@ parseArgs() {  # not using `local` vars because this fct is only exectued once
 	# create all the dir-tree to output folder
 	[ -v globoutput ] && { for i do [ -d "$i" ] && ([ "${globoutput#$(realpath "$i")}" = "$globoutput" ] || error "The --glob-output folder can't be inside an input folder."; cd -- "$i"; find -type d -exec mkdir -p "$globoutput/$(basename "$(realpath "$i")")/{}" \;); done;}
 	# get absolute path, find all files (print size, filepath, input folderpath), sort (biggest size first), compress in parallel
-	realpath -z -- "$@" | xargs -0i find '{}' -type f ${globfilemask+-name "$globfilemask"} -printf '%s\0%P\0%H\0' | perl -0ne 'push @rec, $_; if ($#rec == 2) { push @items, join("", @rec); @rec = (); } END { print(join("", sort { $b <=> $a } @items)) }' | parallel -0L3 --lb --bar compressFile {2} {3} {1} 1 &
+	realpath -z -- "$@" | xargs -0i find '{}' -type f ${globfilemask+-name "$globfilemask"} -printf '%s\0%P\0%H\0' | perl -0ne 'push @rec, $_; if ($#rec == 2) { push @items, join("", @rec); @rec = (); } END { print(join("", sort { $b <=> $a } @items)) }' | parallel -j${globjobs-100%} -0L3 --lb --bar compressFile {2} {3} {1} 1 &
 	# Thanks for the people helping me finding a way to sort by filesize (sorting by group of 3 elements): https://stackoverflow.com/a/76028193/13227011
 	wait; wait  # wait twice as we can hit Ctrl+C twice (1st hit: no new job, 2nd: kill); 1st Ctrl+C kills the first wait
 	# TODO don't compressFile duplicates (explicitly twice same input or implicitely - with the file and the parent folder)
@@ -393,10 +396,9 @@ compressFile() {	# warning: $1 can be empty
 			ffmpeg -v error -y -i "$tmp" -map 0 -c copy -fflags +bitexact -write_xing 0 -metadata_header_padding 10 "$tmp2";  # FFmpeg 6.0 will ALWAYS write at least 10 bytes of padding (even if no ID3 metadata), so I use 10 padding too to prevent unpleasant surprise in the future
 			if [ -v globstrip ]
 			then mp3packer -s -t  "$tmp2" "$tmp"  >/dev/null  # remove every thing that's not the MP3 stream itself
-			else if ((v=(0x$(getBytes "$tmp2" 6)<<21|0x$(getBytes "$tmp2" 7)<<14|0x$(getBytes "$tmp2" 8)<<7|0x$(getBytes "$tmp2" 9))-10))  # Easier to do the test after 1st ffmpeg command: if ID3 length is not 10 then trim, otherwise remove completely ID3 (since there is only padding).
-				then { dd status=none bs=6 count=1 iflag=fullblock; printf $(printf '\\x%x' $((v>>21)) $((v>>14&127)) $((v>>7&127)) $((v&127))); dd status=none bs=$v count=1 iflag=fullblock iflag=skip_bytes skip=4; dd status=none bs=4k iflag=fullblock iflag=skip_bytes skip=10;} <"$tmp2" >"$tmp"  # will remove the 10 bytes padding; ID3v2 length is big-endian
-				else ffmpeg -v error -y -i "$tmp2" -map 0 -c copy -fflags +bitexact -write_xing 0 -id3v2_version 0 "$tmp"
-				fi
+			elif ((v=(0x$(getBytes "$tmp2" 6)<<21|0x$(getBytes "$tmp2" 7)<<14|0x$(getBytes "$tmp2" 8)<<7|0x$(getBytes "$tmp2" 9))-10))  # Easier to do the test after 1st ffmpeg command: if ID3 length is not 10 then trim, otherwise remove completely ID3 (since there is only padding).
+			then { dd status=none bs=6 count=1 iflag=fullblock; printf $(printf '\\x%x' $((v>>21)) $((v>>14&127)) $((v>>7&127)) $((v&127))); dd status=none bs=$v count=1 iflag=fullblock iflag=skip_bytes skip=4; dd status=none bs=4k iflag=fullblock iflag=skip_bytes skip=10;} <"$tmp2" >"$tmp"  # will remove the 10 bytes padding; ID3v2 length is big-endian
+			else ffmpeg -v error -y -i "$tmp2" -map 0 -c copy -fflags +bitexact -write_xing 0 -id3v2_version 0 "$tmp"
 			fi
 			# use mp3packer to add Xing frame (with real duration) of 208 bytes (ffmpeg Xing frame is 522), could be even smaller than 208 bytes if I create it myself (since strings "mp3packer" or "Lavf" are written to Xing)
 			[ -v mp3lossy ] || mp3packer -u "$tmp" "$tmp2" >/dev/null;;
@@ -459,7 +461,7 @@ warning() { printf "\033[1;33mW: $1\033[0m\n" >&2;}
 
 error() { printf "\033[1;31mE: $1\033[0m\n" >&2; exit ${2:-1};}
 
-ctrlCHandler() {
+ctrlCHandler() {  # TODO catch Ctrl+C if hit more than 2 times (and do nothing, just catch it)
 	if [ -v noNewJobs ]; then
 		kill $! 2>/dev/null  # we could add `exit 130`, but it's better to only kill `parallel` so we can print information about already processed files (which is done really fast)
 	else
