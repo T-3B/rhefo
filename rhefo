@@ -32,8 +32,6 @@
 
 # TODO use cpulimit when available, otherwise use what we already use (taskset). cpulimit allows to set % of cpu usage, while taskset forces to use x first cores
 
-# TODO add a param of concurrent jobs (we could compress one zip at a time, but using 6 threads)
-
 
 set -a  # export var+fct automatically
 set -m  # All processes run in a separate process group (needed for Ctrl+C "trick")
@@ -126,19 +124,19 @@ rhefo .
 rhefo -9kl .
 # optimize with only 2 threads, and copy /indir *inside* /outdir
 rhefo -o /outdir -j2 /indir
-# optimize 2 files with default settings and write output to an existing /dir
-rhefo -o /dir <firstFile> <secondFile>
-# optimize all FLAC files in /path/to/dir, recursively and in hidden dirs and
-# output will be copied to /out/dir (filetree is recreated from /path/to/dir)
-rhefo -o /out -m "*.flac" /path/to/dir
-# same as above, but flattened (no subdirectories in /out/dir)
-find -name "*.flac" -type f -print0 | xargs -0 rhefo -s' |\
+# optimize 2 files with default settings and write output to an existing /outdir
+rhefo -o /outdir <firstFile> <secondFile>
+# optimize all FLAC files in /indir, recursively and in hidden dirs and
+# output will be copied to /outdir (folders/files tree is recreated from /indir)
+rhefo -o /outdir -m "*.flac" /path/to/dir
+# same as above, but flattened (no subdirectories in /outdir)
+find -name "*.flac" -type f -print0 | xargs -0 rhefo -o /outdir' |\
 	GREP_COLORS=mt=\;33 grep --color=always -E '^--[[:alnum:]_-]+|$' | GREP_COLORS=mt=\;36 grep --color=always -P '(?<= \| )-\w|$' | GREP_COLORS=mt=\;32 grep --color=always 'better compression\|$' | GREP_COLORS=mt=\;31 grep --color=always 'worse compression\|$' | GREP_COLORS=mt=1 grep --color=always -P '(?<=, )(lossy|compatibility)|$' | GREP_COLORS=mt=\;35 grep --color=always '^#.*\|$'
 )
 
 # Will parse arguments, and then start the whole optimization process (if no errors in the arguments)
 parseArgs() {  # not using `local` vars because this fct is only exectued once
-	[ $(printf '\1' | od -dAn) = 1 ] || { printf 'This script was not tested on BIG ENDIAN devices. I mainly use `printf %x` with\nnumbers of up to 4 bytes.\nPLEASE, open an issue and if you have time HELP ME supporting this architecture\nby simply testing! This would really help a lot, since I only have little-endian\ndevices. Seriously, please.\n'; exit 1;}
+	[ $(printf '\1' | od -dAn) = 1 ] || error 'This script was not tested on BIG ENDIAN devices. I mainly use `printf %x` with\nnumbers of up to 4 bytes.\nPLEASE, open an issue and if you have time HELP ME supporting this architecture\nby simply testing! This would really help a lot, since I only have little-endian\ndevices. Seriously, please.\n'
 	getopt -T && { error 'Your `getopt` is not compatible with this script. Open an issue.' 4;}
 	args=$(getopt -o hm:9j:klno:p:st:y -l help,glob-archnorecur,glob-filemask:,glob-insane,glob-jobs:,glob-keeptime,glob-lossy,glob-output:,glob-prefix:,glob-strip,glob-threads:,glob-tmp:,glob-update,flac-insane,flac-lossy,flac-subset,gzip-insane,gzip-lossy,mp3-lossy,png-insane,zip-insane -n rhefo -s bash -- "$@")
 	(($?)) && error 'Could not parse args. See the help message `rhefo -h`.'
@@ -188,16 +186,18 @@ parseArgs() {  # not using `local` vars because this fct is only exectued once
 	# create all the dir-tree to output folder
 	[ -v globoutput ] && { for i do [ -d "$i" ] && ([ "${globoutput#$(realpath "$i")}" = "$globoutput" ] || error "The --glob-output folder can't be inside an input folder."; cd -- "$i"; find -type d -exec mkdir -p "$globoutput/$(basename "$(realpath "$i")")/{}" \;); done;}
 	# get absolute path, find all files (print size, filepath, input folderpath), sort (biggest size first), compress in parallel
-	realpath -z -- "$@" | xargs -0i find '{}' -type f ${globfilemask+-name "$globfilemask"} -printf '%s\0%P\0%H\0' | perl -0ne 'push @rec, $_; if ($#rec == 2) { push @items, join("", @rec); @rec = (); } END { print(join("", sort { $b <=> $a } @items)) }' | parallel -j${globjobs-100%} -0L3 --lb --bar compressFile {2} {3} {1} 1 &
-	# Thanks for the people helping me finding a way to sort by filesize (sorting by group of 3 elements): https://stackoverflow.com/a/76028193/13227011
-	wait; wait  # wait twice as we can hit Ctrl+C twice (1st hit: no new job, 2nd: kill); 1st Ctrl+C kills the first wait
-	# TODO don't compressFile duplicates (explicitly twice same input or implicitely - with the file and the parent folder)
-	# TODO test with filenames having $@-*
+	{
+		realpath -z -- "$@" | xargs -0i find '{}' -type f ${globfilemask+-name "$globfilemask"} -printf '%s\0%P\0%H\0' | perl -0ne 'push @rec, $_; if ($#rec == 2) { push @items, join("", @rec); @rec = (); } END { print(join("", sort { $b <=> $a } @items)) }' | parallel -j${globjobs-100%} -0L3 --lb --bar compressFile {2} {3} {1} 1
+		# Thanks for the people helping me finding a way to sort by filesize (sorting by group of 3 elements): https://stackoverflow.com/a/76028193/13227011
+		# TODO don't compressFile duplicates (explicitly twice same input or implicitely - with the file and the parent folder)
+		# TODO test with filenames having $@-*
 
-	((s=SECONDS, h=s/3600, m=s/60-h*60, s%=60))
-	set -- $(<"$globstatsfile")
-	printf "Congrats! Processed %d files in %s and saved %sB (%.3f%%)!\n\a" $3 $(((h)) && printf ${h}h; ((m)) && printf ${m}m)${s}s $(numfmt --to=iec-i --format="%.2f" $1) $((1000000*$1/($2?$2:1)))e-4
-	rm -r "$globstatsfile" "$addinsDir"
+		((s=SECONDS, h=s/3600, m=s/60-h*60, s%=60))
+		set -- $(<"$globstatsfile")
+		printf "\rCongrats! Processed %d files in %s and saved %sB (%.3f%%)!\n\a" $3 $(((h)) && printf ${h}h; ((m)) && printf ${m}m)${s}s $(numfmt --to=iec-i --format="%.2f" $1) $((1000000*$1/($2?$2:1)))e-4
+		rm -r "$globstatsfile" "$addinsDir"
+	} &
+	while [ "$(jobs -p)" ]; do wait; done  # each Ctrl+C will kill `wait` (1st hit: no new job, 2nd: kill parallel)  TODO check if can do something better than jobs (it was because once $! is set, it is not unset)
 }
 
 # TODO better to change these2= 2 fct to only support reading data from stdin ?
@@ -457,15 +457,16 @@ compressTmpFolder() {
 	find "$1" -type f -printf '%s\0%P\0%H\0' | perl -0ne 'push @rec, $_; if ($#rec == 2) { push @items, join("", @rec); @rec = (); } END { print(join("", sort { $b <=> $a } @items)) }' | parallel -0L3 --lb compressFile {2} {3} {1}
 }
 
-warning() { printf "\033[1;33mW: $1\033[0m\n" >&2;}
+warning() { printf "\033[1;33mW: %s\033[0m\n" "$1" >&2;}
 
-error() { printf "\033[1;31mE: $1\033[0m\n" >&2; exit ${2:-1};}
+error() { printf "\033[1;31mE: %s\033[0m\n" "$1" >&2; exit ${2:-1};}
 
-ctrlCHandler() {  # TODO catch Ctrl+C if hit more than 2 times (and do nothing, just catch it)
-	if [ -v noNewJobs ]; then
-		kill $! 2>/dev/null  # we could add `exit 130`, but it's better to only kill `parallel` so we can print information about already processed files (which is done really fast)
+ctrlCHandler() {
+	if [ -v ctrlc ]; then  # TODO instead of $! search for parallel's PID (search if it's the best way to kill first child matching "parallel")
+		[ $ctrlc ] || kill $(pstree -ap $$ | grep -m1 parallel | grep -oP '^.*?\K[0-9]+') 2>/dev/null  # we could add `exit 130`, but it's better to only kill `parallel` so we can print information about already processed files (which is done really fast)
+		ctrlc=g  # only allow 2 Ctrl+C signals, after that we simply catch and ignore them
 	else
-		noNewJobs=
+		ctrlc=
 		kill -HUP $(pstree -ap $$ | grep parallel | grep -oP '^.*?\K[0-9]+') 2>/dev/null  # do NOT start any new job in any `parallel` (even grandchild processes)
 		sleep .1  # so the following msg will be shown *after* parallel's output about no new job
 		printf "\r%${COLUMNS}s\r\033[1;36mHit Ctrl+C again to stop all jobs.\033[0m\n" ''  # erase progress bar from parallel, then print msg
@@ -473,7 +474,7 @@ ctrlCHandler() {  # TODO catch Ctrl+C if hit more than 2 times (and do nothing, 
 }
 
 # Set up the Ctrl+C signal handler
-trap 'ctrlCHandler' INT
+trap 'ctrlCHandler' INT  # TODO allow to stop and resume the optimisation (for example with the tool idk the name that can do it only if certain param was set during the kernel compilation; or by simply storing which files were processed but this wouldn't work for big ZIP optimisation)
 
 (($#)) && parseArgs "$@" || parseArgs -h
 
