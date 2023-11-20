@@ -197,7 +197,7 @@ parseArgs() {  # not using `local` vars because this fct is only exectued once
 		printf "\rCongrats! Processed %d files in %s and saved %sB (%.3f%%)!\n\a" $3 $(((h)) && printf ${h}h; ((m)) && printf ${m}m)${s}s $(numfmt --to=iec-i --format="%.2f" $1) $((1000000*$1/($2?$2:1)))e-4
 		rm -r "$globstatsfile" "$addinsDir"
 	} &
-	while [ "$(jobs -p)" ]; do wait; done  # each Ctrl+C will kill `wait` (1st hit: no new job, 2nd: kill parallel)  TODO check if can do something better than jobs (it was because once $! is set, it is not unset)
+	while ! wait; do :; done  # each Ctrl+C will kill `wait` (1st hit: no new job, 2nd: kill parallel)
 }
 
 # TODO better to change these2= 2 fct to only support reading data from stdin ?

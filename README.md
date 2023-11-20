@@ -37,11 +37,11 @@ Optimize as much as possible (**TAKES TIME!!!**) recursively current dir, inplac
 `rhefo -9kl .`\
 Optimize with only 2 threads, and copy /indir *inside* /outdir\
 `rhefo -o /outdir -j2 /indir`\
-Optimize 2 files with default settings and write them to an existing /dir\
-`rhefo -o /dir <firstFile> <secondFile>`\
-Optimize all FLAC files in /path/to/dir, recursively and in hidden dirs and output will be copied to /out/dir (filetree is recreated from /path/to/dir)\
-`rhefo -o /out -m "*.flac" /path/to/dir`\
-Same as above, but flattened (no subdirectories in /out/dir)\
+Optimize 2 files with default settings and write them to an existing /outdir\
+`rhefo -o /outdir <firstFile> <secondFile>`\
+Optimize all FLAC files in /indir, recursively and in hidden dirs and output will be copied to /outdir (filetree is recreated from /indir)\
+`rhefo -o /outdir -m "*.flac" /indir`\
+Same as above, but flattened (no subdirectories in /outdir)\
 `find -name "*.flac" -type f -print0 | xargs -0 rhefo -o /out`
 
 For further help and options, see the output of `rhefo -h` (and it's beautiful with lots of colors!).\
