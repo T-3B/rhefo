@@ -482,3 +482,4 @@ trap 'ctrlCHandler' INT  # TODO allow to stop and resume the optimisation (for e
 exit
 # add-ins encoded in base64 below this eof line (could append them in binary data, smaller file but many text editors don't support NULL bytes)
 #EOF#
+blablablalbalaa
