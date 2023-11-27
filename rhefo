@@ -178,8 +178,8 @@ parseArgs() {  # not using `local` vars because this fct is only exectued once
 	printf '0\n0\n0\n' >"${globstatsfile=$(mktemp -p"$globtmp" rhefo_${version}_tmpXXX)}"  # file where stats are wrote - to allow edit in subshells since we use `parallel`; 1st line is saved bytes, 2nd is input files size, 3rd is nbr input files
 
 	# extract embedded add-ins
-	addinsDir=$(mktemp -dp/tmp rhefo_${version}_tmpXXX)
-	PATH+=:$addinsDir
+	addinsDir=$(mktemp -dp/tmp rhefo_${version}_tmpXXX)  # use /tmp for temp dir because we don't want weird chars (like ':') since we add it to PATH
+	PATH=$addinsDir:$PATH
 	dd status=none bs=4k iflag=fullblock iflag=skip_bytes skip=$((6+$(grep -bm1 '^#EOF#$' "$(realpath -- "$BASH_SOURCE")" | cut -f1 -d:))) <"$(realpath -- "$BASH_SOURCE")" | base64 -d | tar xC "$addinsDir"
 	chmod -R +x "$addinsDir"
 
@@ -196,7 +196,7 @@ parseArgs() {  # not using `local` vars because this fct is only exectued once
 		set -- $(<"$globstatsfile")
 		printf "\rCongrats! Processed %d files in %s and saved %sB (%.3f%%)!\n\a" $3 $(((h)) && printf ${h}h; ((m)) && printf ${m}m)${s}s $(numfmt --to=iec-i --format="%.2f" $1) $((1000000*$1/($2?$2:1)))e-4
 		rm -r "$globstatsfile" "$addinsDir"
-	} &
+	} &  # all the code is done in background so it won't be killed by Ctrl+C
 	while ! wait; do :; done  # each Ctrl+C will kill `wait` (1st hit: no new job, 2nd: kill parallel)
 }
 
@@ -482,4 +482,3 @@ trap 'ctrlCHandler' INT  # TODO allow to stop and resume the optimisation (for e
 exit
 # add-ins encoded in base64 below this eof line (could append them in binary data, smaller file but many text editors don't support NULL bytes)
 #EOF#
-blablablalbalaa
