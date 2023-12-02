@@ -36,7 +36,6 @@
 
 set -a  # export var+fct automatically
 set -m  # All processes run in a separate process group (needed for Ctrl+C "trick")
-export SHELLOPTS  # for all child processes (spawned by `parallel`), use the above `set`s
 version=v0.0.1
 help=$(echo 'Really High Efficient File Optimizer (RHEFO), version '$version'. Under SSPL.
 For updates, supported files, dependencies, issues, license and many more, see:
@@ -260,6 +259,7 @@ ffCompressStreams() {
 
 # $1=filepath	$2=prefixpath	$3=filesize		$4=inIsNotTMP		("$2/$1" = full absolute input path)	(do NOT set $4 when this is a subcall from another compressFile - i.e. when compressFile a file from an extracted ZIP file); none can have spaces etc
 compressFile() {	# warning: $1 can be empty
+	set -a  # export everything automaticall (e.g. sub-parallel calls)
 	local a p v  # variables for temporary/intermediate values, ONLY SET THEM IN THE CASE SWITCH
 	local atime mtime size mime in=$2${1:+/$1} tmp tmpname tmp2 out
 	atime=$(stat -c%x "$in")
@@ -364,22 +364,7 @@ compressFile() {	# warning: $1 can be empty
 			# Warning! Do not use ffmpeg as it merges all tags with the same key within a single tag (with ';' as a separator).
 			
 			if ! [ -v globstrip ]
-			then
-				#metaflac --list --block-type=PICTURE "$tmp" | grep -oP '(?<=^METADATA block #)\d+$' | while read -r p  # we extract each pictures, AND each block of PICTURE type then remove these block from the file; later we update the individual blocks and insert them back;;; todo compress pictures in parallel
-				#do a=$(mktemp -p"$globtmp" XXX)
-					#metaflac --block-number=$p --export-picture-to=$a "$tmp"
-					#metaflac --block-number=$p --list --data-format=binary "$tmp" >$a.block
-					#metaflac --block-number=$p --remove "$tmp"
-					#v=$(wc -c <$a)
-					#compressFile "$globtmp"/$a  # ok because we compress file based on mime-type (not extension)
-					#p=$(wc -c <$a)
-					#{ intToBytes $((0x$(getBytes '' 0 4)-v+p)) 4; head -c $(($(wc -c <$a.block)-v-8)); intToBytes $p 4; cat $a;} <$a.block >$a.blockNew  # taking the first 4 bytes as block length even if the first one isn't, easier to implement and works. We update block length, image data length and image data.
-					## now the $a.blockNew contains the opt picture, with correct size. todo Colors (the 4 bytes just before pic size) could be changed for example by ECT. Colors are the number of indexed colors; tried and everything works on PC if it's not updated; we could use `identify -verbose "$tmp"` and look at "Colormap entries:", if not in output then not indexed (at least for PNG), would add a dependency I don't want. Could also remove all block from FLAC, try to import pic and let FLAC figure it out (Colors) for me then copy (too much work for what it brings)
-					#metaflac --append "$tmp" <$a.blockNew  # TODO add blocks back only after FLAC stream optimization (so do the compressFile in background)
-					#rm $a $a.block{,New}
-				#done
-				
-				a=$(metaflac --list --block-type=PICTURE "$tmp" | grep -oP '(?<=^METADATA block #)\d+$')  # PICTURE blocks IDs
+			then a=$(metaflac --list --block-type=PICTURE "$tmp" | grep -oP '(?<=^METADATA block #)\d+$')  # PICTURE blocks IDs
 				# extract pictures (pics themselves and blocks), filenames written to array 'a'
 				parallel 'metaflac --block-number={} --export-picture-to="$tmp".{} "$tmp"; metaflac --block-number={} --list --data-format=binary "$tmp" >"$tmp".{}.block' ::: $a
 				metaflac --remove --block-type=PICTURE "$tmp"  # remove pics, since we append them later
