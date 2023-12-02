@@ -22,7 +22,7 @@
 # TODO add globarchnoroot to remove root folder if there is only one folder
 # TODO add option to remove __MACOSX folder from inside archives add to globarch-lossy
 
-# TODO for all the solid archive compressors, different file sortings will give different sizes (remember .tar-based)
+# TODO for all the solid archive compressors, different file sortings will give different sizes (remember, do it too in TAR for .tar-based)
 #		TODOOOOOOOOOOOOOO binsort (binsort use simhash + find the shortest path - something like the Voyageur de Commerce - so try implementing with tlsh and nilsimsa)
 #		binsort wins by a large margin a greedy algorithm (take the closest file - with minimal distance - each time) with nilsimsa - didn't try tlsh as the CLI sucks
 
@@ -32,9 +32,11 @@
 
 # TODO use cpulimit when available, otherwise use what we already use (taskset). cpulimit allows to set % of cpu usage, while taskset forces to use x first cores
 
+# TODO set TMPDIR so we don't need to use -p"$globtmp" with `mkdir`
 
 set -a  # export var+fct automatically
 set -m  # All processes run in a separate process group (needed for Ctrl+C "trick")
+export SHELLOPTS  # for all child processes (spawned by `parallel`), use the above `set`s
 version=v0.0.1
 help=$(echo 'Really High Efficient File Optimizer (RHEFO), version '$version'. Under SSPL.
 For updates, supported files, dependencies, issues, license and many more, see:
@@ -85,7 +87,9 @@ List of options (global ones first, then grouped by file type):
 --flac-lossy		better compression, lossy
   if set, vendor string from VORBIS_COMMENT is removed
     all blocks except VORBIS_COMMENT & PICTURE are removed (seektable,...)
-    if there are no tags, then VORBIS_COMMENT is removed too
+    if there are no tags, then VORBIS_COMMENT block is removed too
+  all PICTUREs are compressed with --glob-strip (drop all APICs metadata)
+    PICTUREs type and description are kept, but not e.g. EXIF
 --flac-subset		worse compression, faster
   if set, use subset mode (HW decode guaranteed); default: non-subset
 --gzip-insane		better compression, far slower (TODO benchmark)
@@ -187,6 +191,7 @@ parseArgs() {  # not using `local` vars because this fct is only exectued once
 	[ -v globoutput ] && { for i do [ -d "$i" ] && ([ "${globoutput#$(realpath "$i")}" = "$globoutput" ] || error "The --glob-output folder can't be inside an input folder."; cd -- "$i"; find -type d -exec mkdir -p "$globoutput/$(basename "$(realpath "$i")")/{}" \;); done;}
 	# get absolute path, find all files (print size, filepath, input folderpath), sort (biggest size first), compress in parallel
 	{
+		# TODO parallel --memsuspend
 		realpath -z -- "$@" | xargs -0i find '{}' -type f ${globfilemask+-name "$globfilemask"} -printf '%s\0%P\0%H\0' | perl -0ne 'push @rec, $_; if ($#rec == 2) { push @items, join("", @rec); @rec = (); } END { print(join("", sort { $b <=> $a } @items)) }' | parallel -j${globjobs-100%} -0L3 --lb --bar compressFile {2} {3} {1} 1
 		# Thanks for the people helping me finding a way to sort by filesize (sorting by group of 3 elements): https://stackoverflow.com/a/76028193/13227011
 		# TODO don't compressFile duplicates (explicitly twice same input or implicitely - with the file and the parent folder)
@@ -264,7 +269,7 @@ compressFile() {	# warning: $1 can be empty
 	out=$in
 	[[ $4 && -v globoutput ]] && out=$globoutput/${2##*/}${1:+/$1}
 	[[ $4 && -v globprefix ]] && out=${out%/*}/$globprefix${out##*/}
-	[[ $4 && (-v globoutput || -v globprefix) && ! -v globupdate && -e "$out" ]] && { warning "'$out' already exists, file not compressed nor updated. Rerun with -y to overwrite files in output directory.";rm -f "$tmp";return;}
+	[[ $4 && (-v globoutput || -v globprefix) && ! -v globupdate && -e "$out" ]] && { warning "'$out' already exists, file not compressed nor updated. Rerun with -y to overwrite files in output directory, or with -p to add a prefix.";rm -f "$tmp";return;}
 	cp "$in" "$tmp"  # TODO remove this and insert it in each switch case (since we need to read it once, read it when needed - and run directly a command with the processed data)
 	size=${3-$(wc -c <"$tmp")}
 	tmpname=${tmp##*/}
@@ -358,24 +363,33 @@ compressFile() {	# warning: $1 can be empty
 			
 			# Warning! Do not use ffmpeg as it merges all tags with the same key within a single tag (with ';' as a separator).
 			
-			if [ -v globstrip ]
-			then metaflac --remove-all "$tmp"
-			else metaflac --list --block-type=PICTURE "$tmp" | grep ^METADATA | while read -r p  # we extract each pictures, AND each block of PICTURE type then remove these block from the file; later we update the individual blocks and insert them back;;; todo compress pictures in parallel
-				do a=$(mktemp -p"$globtmp" XXX)
-					metaflac --block-number=${p#*#} --export-picture-to=$a "$tmp"
-					metaflac --block-number=${p#*#} --list --data-format=binary "$tmp" >$a.block
-					metaflac --block-number=${p#*#} --remove "$tmp"
-					v=$(wc -c <$a)
-					compressFile "$globtmp"/$a  # ok because we compress file based on mime-type (not extension)
-					p=$(wc -c <$a)
-					{ intToBytes $((0x$(getBytes '' 0 4)-v+p)) 4; head -c $(($(wc -c <$a.block)-v-8)); intToBytes $p 4; cat $a;} <$a.block >$a.blockNew  # taking the first 4 bytes as block length even if the first one isn't, easier to implement and works. We update block length, image data length and image data.
-					# now the $a.blockNew contains the opt picture, with correct size. todo Colors (the 4 bytes just before pic size) could be changed for example by ECT. Colors are the number of indexed colors; tried and everything works on PC if it's not updated; we could use `identify -verbose "$tmp"` and look at "Colormap entries:", if not in output then not indexed (at least for PNG), would add a dependency I don't want. Could also remove all block from FLAC, try to import pic and let FLAC figure it out (Colors) for me then copy (too much work for what it brings)
-					metaflac --append "$tmp" <$a.blockNew  # TODO add blocks back only after FLAC stream optimization (so do the compressFile in background)
-					rm $a $a.block{,New}
-				done
+			if ! [ -v globstrip ]
+			then
+				#metaflac --list --block-type=PICTURE "$tmp" | grep -oP '(?<=^METADATA block #)\d+$' | while read -r p  # we extract each pictures, AND each block of PICTURE type then remove these block from the file; later we update the individual blocks and insert them back;;; todo compress pictures in parallel
+				#do a=$(mktemp -p"$globtmp" XXX)
+					#metaflac --block-number=$p --export-picture-to=$a "$tmp"
+					#metaflac --block-number=$p --list --data-format=binary "$tmp" >$a.block
+					#metaflac --block-number=$p --remove "$tmp"
+					#v=$(wc -c <$a)
+					#compressFile "$globtmp"/$a  # ok because we compress file based on mime-type (not extension)
+					#p=$(wc -c <$a)
+					#{ intToBytes $((0x$(getBytes '' 0 4)-v+p)) 4; head -c $(($(wc -c <$a.block)-v-8)); intToBytes $p 4; cat $a;} <$a.block >$a.blockNew  # taking the first 4 bytes as block length even if the first one isn't, easier to implement and works. We update block length, image data length and image data.
+					## now the $a.blockNew contains the opt picture, with correct size. todo Colors (the 4 bytes just before pic size) could be changed for example by ECT. Colors are the number of indexed colors; tried and everything works on PC if it's not updated; we could use `identify -verbose "$tmp"` and look at "Colormap entries:", if not in output then not indexed (at least for PNG), would add a dependency I don't want. Could also remove all block from FLAC, try to import pic and let FLAC figure it out (Colors) for me then copy (too much work for what it brings)
+					#metaflac --append "$tmp" <$a.blockNew  # TODO add blocks back only after FLAC stream optimization (so do the compressFile in background)
+					#rm $a $a.block{,New}
+				#done
+				
+				a=$(metaflac --list --block-type=PICTURE "$tmp" | grep -oP '(?<=^METADATA block #)\d+$')  # PICTURE blocks IDs
+				# extract pictures (pics themselves and blocks), filenames written to array 'a'
+				parallel 'metaflac --block-number={} --export-picture-to="$tmp".{} "$tmp"; metaflac --block-number={} --list --data-format=binary "$tmp" >"$tmp".{}.block' ::: $a
+				metaflac --remove --block-type=PICTURE "$tmp"  # remove pics, since we append them later
+				globstrip= parallel --lb 's=$(wc -c <"$tmp".{}); compressFile "$tmp".{}; t=$(wc -c <"$tmp".{}); { intToBytes $((0x$(getBytes "" 0 4)-s+t)) 4; head -c $(($(wc -c <"$tmp".{}.block)-s-8)); intToBytes $t 4; cat "$tmp".{};} <"$tmp".{}.block >"$tmp".{}.blockNew; rm "$tmp".{}{,.block}' ::: $a & # compress PICTURES in parallel with --glob-strip; Taking the first 4 bytes as block length even if the first one isn't, easier to implement and works. We update block length, image data length and image data.
+				# now the {}.blockNew contains the opt picture, with correct size. todo Colors (the 4 bytes just before pic size) could be changed for example by ECT. Colors are the number of indexed colors; tried and everything works on PC if it's not updated; we could use `identify -verbose "$tmp"` and look at "Colormap entries:", if not in output then not indexed (at least for PNG), would add a dependency I don't want. Could also remove all block from FLAC, try to import pic and let FLAC figure it out (Colors) for me then copy (too much work for what it brings)
 			fi
-			flac "$tmp" -smepfb 4096 -P 0 -r ${flacsubset+8 -l $(($(metaflac --show-sample-rate "$tmp")>48000?32:12))}${flacsubset-15 -l 32 --lax} -A subdivide_tukey\(4${flacinsane+0}\)
-			if [ -v flaclossy ]
+			flac "$tmp" -smepfb 4096 -P 0 -r ${flacsubset+8 -l $(($(metaflac --show-sample-rate "$tmp")>48000?32:12))} ${flacsubset-15 -l 32 --lax} -A subdivide_tukey\(4${flacinsane+0}\)
+			if [ -v globstrip ]
+			then metaflac --remove-all "$tmp"  # here and not before flac command because will add VORBIS_COMMENT even if empty
+			elif [ -v flaclossy ]
 			then metaflac --remove --dont-use-padding --except-block-type=VORBIS_COMMENT,PICTURE "$tmp"
 				if metaflac --list --block-type=VORBIS_COMMENT "$tmp" | grep -q '^\s\scomments: 0$'
 				then metaflac --remove --dont-use-padding --block-type=VORBIS_COMMENT "$tmp"
@@ -384,18 +398,19 @@ compressFile() {	# warning: $1 can be empty
 					{ dd status=none bs=$p count=1 iflag=fullblock; p=$((0x$(getBytes '' 0 3)-${#v})); intToBytes $p 3; intToBytes 0 4; dd status=none bs=4k iflag=fullblock iflag=skip_bytes skip=$((4+${#v}));} <"$tmp" >"$tmp2"  # TL;DR: 0xaaabbbb<vendorString>; aaa length metadata block in big endian, bbbb length vendor string in little
 					mv "$tmp2" "$tmp"
 				fi
-			fi;;
+			fi
+			[ -v a ] && { wait; for p in $a; do metaflac --append "$tmp" <"$tmp".$p.blockNew; rm "$tmp".$p.blockNew; done;};;  # we add PICTUREs back to the FLAC file
 		audio/mpeg | audio/mp3 | audio/mpeg3 | audio/x-mpeg-3)
 			# TODO detect and compress if mono was encoded as stereo
 			# MP3Packer will write "mp3packer2.04-268\n" in the needed *padding* of frames, removing them break the file (as they're needed). We could remove the padding only at the COMPLETELY end of file, even if FFmpeg decode it fine (and same checksum), some softwares will report an error (and if after removing the padding we reuse MP3Packer on it, boom the checksum does not match anymore!!!)
 			# TODO change ffmpeg to another software, because convert ID3 tags to TXXX (comment: https://trac.ffmpeg.org/ticket/8996; lyrics: https://trac.ffmpeg.org/ticket/8795; perhaps others); the good thing with ffmpeg is: it can remove ID3 completely, it will convert IDv1 to IDv2, it will use UTF-8 (instead of heavier UTF-16), can remove Xing frame
 			#ffCompressStreams "$tmp" mp3  # TODO see if works and doesn't add metadata for example
 			# TODO compress album arts (idk if we can embed something else)
-			# TODO remove FFmpeg by more binary BASH logic, keep in mind that FFmpeg is only great for the UTF-16 → UTF-8 conversion and Xing frame removal
+			# TODO remove FFmpeg by more binary BASH logic, keep in mind that FFmpeg is only great for the UTF-16 -> UTF-8 conversion and Xing frame removal
 			mp3packer -z --workers 1 "$in" "$tmp" >/dev/null  # mp3packer always adds a Xing/LAME frame
 			ffmpeg -v error -y -i "$tmp" -map 0 -c copy -fflags +bitexact -write_xing 0 -metadata_header_padding 10 "$tmp2";  # FFmpeg 6.0 will ALWAYS write at least 10 bytes of padding (even if no ID3 metadata), so I use 10 padding too to prevent unpleasant surprise in the future
 			if [ -v globstrip ]
-			then mp3packer -s -t  "$tmp2" "$tmp"  >/dev/null  # remove every thing that's not the MP3 stream itself
+			then mp3packer -s -t  "$tmp2" "$tmp"  >/dev/null  # remove everything that's not the MP3 stream itself
 			elif ((v=(0x$(getBytes "$tmp2" 6)<<21|0x$(getBytes "$tmp2" 7)<<14|0x$(getBytes "$tmp2" 8)<<7|0x$(getBytes "$tmp2" 9))-10))  # Easier to do the test after 1st ffmpeg command: if ID3 length is not 10 then trim, otherwise remove completely ID3 (since there is only padding).
 			then { dd status=none bs=6 count=1 iflag=fullblock; printf $(printf '\\x%x' $((v>>21)) $((v>>14&127)) $((v>>7&127)) $((v&127))); dd status=none bs=$v count=1 iflag=fullblock iflag=skip_bytes skip=4; dd status=none bs=4k iflag=fullblock iflag=skip_bytes skip=10;} <"$tmp2" >"$tmp"  # will remove the 10 bytes padding; ID3v2 length is big-endian
 			else ffmpeg -v error -y -i "$tmp2" -map 0 -c copy -fflags +bitexact -write_xing 0 -id3v2_version 0 "$tmp"
@@ -424,8 +439,7 @@ compressFile() {	# warning: $1 can be empty
 		image/png | image/x-png | image/vnd.mozilla.apng)
 			# Tested software: ECT, zopflipng_mrkrzych00; zopflipng_mrkrzych00 -y -m --iterations=999 --slowfix --all --lossy_transparent --alpha_cleaners=bhvapw --pass=999 in out
 			# ECT is the best Deflate encoder (looking at compression ratio only), so the only way to beat it is to bruteforce even more filters than `ect --allfilters-b --pal_sort=120` (not using this as it takes ages), but then if we find a better filter we could run ect on it and it will reuse the filter if gives better ratio
-			# TODO can apngopt can sometimes do lossy things (iirc it will change the pixels to rgba(pc)) ?
-			
+			# TODO can apngopt sometimes do lossy things (iirc it will change the pixels to rgba(pc)) ?
 			# TODO remove useless alpha channel
 			if [ $(ffprobe -v warning -show_entries stream=codec_name -of default=nk=1:nw=1 "$tmp") = apng ]
 			then # ect -1 ${globstrip+-strip} "$tmp"  # TODO (cannot strip using ECT since it drops all other frames - only 1st one is kept)
@@ -446,8 +460,8 @@ compressFile() {	# warning: $1 can be empty
 	rm -f "$tmp2"
 	[ -v globkeeptime ] && touch -md"$mtime" "$tmp" && touch -ad"$atime" "$tmp"
 	if [ $4 ]
-	then sem --fg --id "$globstatsfile" 'set -- $(<"$globstatsfile"); printf "$(('$size'+$1))\n$(('$3'+$2))\n$((1+$3))" >"$globstatsfile"'  # use a semaphore to allow only one thread to write at a time; TODO test if id can have spaces and fancy chars
-		[[ -v globoutput && ! -v globupdate && -e "$out" ]] && { warning "'$out' already exists, not updated. Compressed version here: '$tmp'";} || { mv "$tmp" "$out"; chown -f --reference="$in" "$out"; chmod -f --reference="$in" "$out";}
+	then sem --fg --id "$globstatsfile" 'set -- $(<"$globstatsfile"); printf "$(('$size'+$1))\n$(('$3'+$2))\n$((1+$3))\n" >"$globstatsfile"'  # use a semaphore to allow only one thread to write at a time
+		[[ -v globoutput && ! -v globupdate && -e "$out" ]] && { warning "'$out' already exists, not updated. Compressed version here: '$tmp'.\nRerun with -y to overwrite files in output directory, or with -p to add a prefix.";} || { mv "$tmp" "$out"; chown -f --reference="$in" "$out"; chmod -f --reference="$in" "$out";}
 	else mv "$tmp" "$out"
 	fi
 }
@@ -462,7 +476,7 @@ warning() { printf "\033[1;33mW: %s\033[0m\n" "$1" >&2;}
 error() { printf "\033[1;31mE: %s\033[0m\n" "$1" >&2; exit ${2:-1};}
 
 ctrlCHandler() {
-	if [ -v ctrlc ]; then  # TODO instead of $! search for parallel's PID (search if it's the best way to kill first child matching "parallel")
+	if [ -v ctrlc ]; then
 		[ $ctrlc ] || kill $(pstree -ap $$ | grep -m1 parallel | grep -oP '^.*?\K[0-9]+') 2>/dev/null  # we could add `exit 130`, but it's better to only kill `parallel` so we can print information about already processed files (which is done really fast)
 		ctrlc=g  # only allow 2 Ctrl+C signals, after that we simply catch and ignore them
 	else
