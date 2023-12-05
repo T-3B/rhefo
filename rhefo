@@ -26,13 +26,11 @@
 #		TODOOOOOOOOOOOOOO binsort (binsort use simhash + find the shortest path - something like the Voyageur de Commerce - so try implementing with tlsh and nilsimsa)
 #		binsort wins by a large margin a greedy algorithm (take the closest file - with minimal distance - each time) with nilsimsa - didn't try tlsh as the CLI sucks
 
-# TODO control memory: take only what's needed (backup, copy, ...) in globtmp, if taking more (tmp2, decompressing archive, ...) do that in each case (specific to a mimie-type)
+# TODO control memory: take only what's needed (backup, copy, ...) in TMPDIR, if taking more (tmp2, decompressing archive, ...) do that in each case (specific to a mimie-type)
 # put in a file what we can still use in mem to be safe, if not enough space wait until we can (can we do that with semaphores with parallel ?)
-# => add a setting "globmaxmem" to limit the maximum memory used at the same time in the globtmp folder
+# => add a setting "globmaxmem" to limit the maximum memory used at the same time in the TMPDIR folder (parallel has some parameter to suspend jobs if not enough mem - search for "mem" in man page)
 
 # TODO use cpulimit when available, otherwise use what we already use (taskset). cpulimit allows to set % of cpu usage, while taskset forces to use x first cores
-
-# TODO set TMPDIR so we don't need to use -p"$globtmp" with `mkdir`
 
 set -a  # export var+fct automatically
 set -m  # All processes run in a separate process group (needed for Ctrl+C "trick")
@@ -143,7 +141,7 @@ parseArgs() {  # not using `local` vars because this fct is only exectued once
 	getopt -T && { error 'Your `getopt` is not compatible with this script. Open an issue.' 4;}
 	args=$(getopt -o hm:9j:klno:p:st:y -l help,glob-archnorecur,glob-filemask:,glob-insane,glob-jobs:,glob-keeptime,glob-lossy,glob-output:,glob-prefix:,glob-strip,glob-threads:,glob-tmp:,glob-update,flac-insane,flac-lossy,flac-subset,gzip-insane,gzip-lossy,mp3-lossy,png-insane,zip-insane -n rhefo -s bash -- "$@")
 	(($?)) && error 'Could not parse args. See the help message `rhefo -h`.'
-	globtmp=/dev/shm
+	TMPDIR=/dev/shm  # mktemp uses directly TMPDIR, so set it instead of another variable globtmp (or we should specify this variable as an argument)
 	eval set -- "$args"
 	while :
 	do case "$1" in
@@ -159,7 +157,7 @@ parseArgs() {  # not using `local` vars because this fct is only exectued once
 			-p | --glob-prefix)		[ "$2" ] || error 'Prefix is empty.'; globprefix=$2; shift;;
 			-s | --glob-strip)		globstrip=;gziplossy=;flaclossy=;mp3lossy=;;
 			-t | --glob-threads)	((0<$2 && $(nproc --all)>=$2)) || error "Wrong threads int: '$2'."; taskset -acp 0$((-$2+1)) $$ >/dev/null; shift;;  # restrict this script to use the first <N> processors
-			--glob-tmp)				[[ -d "$2" && -r "$2" && -w "$2" ]] && globtmp=$(realpath "$2") || { warning 'Could not use given --glob-tmp, using "/tmp" instead.'; globtmp=/tmp;}; shift;;
+			--glob-tmp)				[[ -d "$2" && -r "$2" && -w "$2" ]] && TMPDIR=$(realpath "$2") || { warning 'Could not use given --glob-tmp, using "/tmp" instead.'; TMPDIR=/tmp;}; shift;;
 			-y | --glob-update)		globupdate=;;
 			--flac-insane)			flacinsane=;;
 			--flac-lossy)			flaclossy;;
@@ -178,7 +176,7 @@ parseArgs() {  # not using `local` vars because this fct is only exectued once
 	(($#)) || error 'No input given. See the help message `rhefo -h`.'
 	for i do [ -r "$i" ] || error "Input '$i' does not exist or cannot read it."; done
 
-	printf '0\n0\n0\n' >"${globstatsfile=$(mktemp -p"$globtmp" rhefo_${version}_tmpXXX)}"  # file where stats are wrote - to allow edit in subshells since we use `parallel`; 1st line is saved bytes, 2nd is input files size, 3rd is nbr input files
+	printf '0\n0\n0\n' >"${globstatsfile=$(mktemp rhefo_${version}_tmpXXX)}"  # file where stats are wrote - to allow edit in subshells since we use `parallel`; 1st line is saved bytes, 2nd is input files size, 3rd is nbr input files
 
 	# extract embedded add-ins
 	addinsDir=$(mktemp -dp/tmp rhefo_${version}_tmpXXX)  # use /tmp for temp dir because we don't want weird chars (like ':') since we add it to PATH
@@ -264,8 +262,8 @@ compressFile() {	# warning: $1 can be empty
 	local atime mtime size mime in=$2${1:+/$1} tmp tmpname tmp2 out
 	atime=$(stat -c%x "$in")
 	mtime=$(stat -c%y "$in")
-	tmp=$(mktemp -p"$globtmp" --suff=."${in##*/}" XXX)  # always use $tmp, even if recompressing the files that were inside an archive, to be safe with wildcards "$tmp".* (when bruteforcing compression args) - also added a dot (safe to drop the extension for some compression formats like GZ)
-	#TODO check if $globtmp has enough free mem (5x $in size for archives, 3x for others)
+	tmp=$(mktemp --suff=."${in##*/}" XXX)  # always use $tmp, even if recompressing the files that were inside an archive, to be safe with wildcards "$tmp".* (when bruteforcing compression args) - also added a dot (safe to drop the extension for some compression formats like GZ)
+	#TODO check if $TMPDIR has enough free mem
 	out=$in
 	[[ $4 && -v globoutput ]] && out=$globoutput/${2##*/}${1:+/$1}
 	[[ $4 && -v globprefix ]] && out=${out%/*}/$globprefix${out##*/}
@@ -284,7 +282,7 @@ compressFile() {	# warning: $1 can be empty
 			tmp2=${tmp2%.*}  # TODO remove any extension, or only if extension is GZ (case *in*sensitive) ?
 			gzip -dc "$tmp" >"$tmp2"
 			[[ -v globarchnorecur && $(file -b --mime-type "$tmp2") != application/x-tar ]] || compressFile "$tmp2"  # Only compressFile if it is either tar or if globarchnorecur is not set
-			cd "$(mktemp -dp"$globtmp")"
+			cd "$(mktemp -d)"
 			mv "$tmp" "$p"  # TODO not safe at all, and use tmp2 (not tmp)
 			gzip -1c$([[ -v gziplossy || "$p.gz" = "$tmpname" ]] && echo n) "$p" >"$tmp"
 			cd - >/dev/null
@@ -308,7 +306,7 @@ compressFile() {	# warning: $1 can be empty
 			#ffCompressStreams "$tmp";;  # TODO test for MP3
 			;;
 		application/x-tar | application/x-cbt)
-			v=$(mktemp -dp"$globtmp")
+			v=$(mktemp -d)
 			tar xf "$tmp" -C"$v"
 			rm "$tmp"
 			[ -v globarchnorecur ] || compressTmpFolder "$v"
@@ -324,7 +322,7 @@ compressFile() {	# warning: $1 can be empty
 			# tested softwares: minizip-ng, 7z, kzip, ect
 			
 			# TODOOOOOOO input archived files do not keep their orig date
-			v=$(mktemp -dp"$globtmp")
+			v=$(mktemp -d)
 			p=$(zipdetails "$tmp" | grep Compression\ Method | grep -vce "0008 'Deflated'" -e "0000 'Stored'")  # count all embedded files stored in another method than Deflate or Store
 			7zz x "$tmp" -o"$v" >/dev/null
 			rm "$tmp"
@@ -391,7 +389,7 @@ compressFile() {	# warning: $1 can be empty
 			# TODO change ffmpeg to another software, because convert ID3 tags to TXXX (comment: https://trac.ffmpeg.org/ticket/8996; lyrics: https://trac.ffmpeg.org/ticket/8795; perhaps others); the good thing with ffmpeg is: it can remove ID3 completely, it will convert IDv1 to IDv2, it will use UTF-8 (instead of heavier UTF-16), can remove Xing frame
 			#ffCompressStreams "$tmp" mp3  # TODO see if works and doesn't add metadata for example
 			# TODO compress album arts (idk if we can embed something else)
-			# TODO remove FFmpeg by more binary BASH logic, keep in mind that FFmpeg is only great for the UTF-16 -> UTF-8 conversion and Xing frame removal
+			# TODO remove FFmpeg by more binary BASH logic, keep in mind that FFmpeg is only great for the UTF-16 -> UTF-8 conversion (check mp3unicode package) and Xing frame removal
 			mp3packer -z --workers 1 "$in" "$tmp" >/dev/null  # mp3packer always adds a Xing/LAME frame
 			ffmpeg -v error -y -i "$tmp" -map 0 -c copy -fflags +bitexact -write_xing 0 -metadata_header_padding 10 "$tmp2";  # FFmpeg 6.0 will ALWAYS write at least 10 bytes of padding (even if no ID3 metadata), so I use 10 padding too to prevent unpleasant surprise in the future
 			if [ -v globstrip ]
