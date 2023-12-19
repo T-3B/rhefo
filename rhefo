@@ -176,11 +176,12 @@ parseArgs() {  # not using `local` vars because this fct is only exectued once
 	(($#)) || error 'No input given. See the help message `rhefo -h`.'
 	for i do [ -r "$i" ] || error "Input '$i' does not exist or cannot read it."; done
 
-	printf '0\n0\n0\n' >"${globstatsfile=$(mktemp rhefo_${version}_tmpXXX)}"  # file where stats are wrote - to allow edit in subshells since we use `parallel`; 1st line is saved bytes, 2nd is input files size, 3rd is nbr input files
+	printf '0\n0\n0\n' >"${globstatsfile=$(mktemp --tmpdir rhefo_${version}_tmpXXX)}"  # file where stats are wrote - to allow edit in subshells since we use `parallel`; 1st line is saved bytes, 2nd is input files size, 3rd is nbr input files
 
 	# extract embedded add-ins
 	addinsDir=$(mktemp -dp/tmp rhefo_${version}_tmpXXX)  # use /tmp for temp dir because we don't want weird chars (like ':') since we add it to PATH
-	PATH=$addinsDir:$PATH
+	
+	exitPATH=$addinsDir:$PATH
 	dd status=none bs=4k iflag=fullblock iflag=skip_bytes skip=$((6+$(grep -bm1 '^#EOF#$' "$(realpath -- "$BASH_SOURCE")" | cut -f1 -d:))) <"$(realpath -- "$BASH_SOURCE")" | base64 -d | tar xC "$addinsDir"
 	chmod -R +x "$addinsDir"
 
@@ -262,7 +263,7 @@ compressFile() {	# warning: $1 can be empty
 	local atime mtime size mime in=$2${1:+/$1} tmp tmpname tmp2 out
 	atime=$(stat -c%x "$in")
 	mtime=$(stat -c%y "$in")
-	tmp=$(mktemp --suff=."${in##*/}" XXX)  # always use $tmp, even if recompressing the files that were inside an archive, to be safe with wildcards "$tmp".* (when bruteforcing compression args) - also added a dot (safe to drop the extension for some compression formats like GZ)
+	tmp=$(mktemp --tmpdir --suff=."${in##*/}" XXX)  # always use $tmp, even if recompressing the files that were inside an archive, to be safe with wildcards "$tmp".* (when bruteforcing compression args) - also added a dot (safe to drop the extension for some compression formats like GZ)
 	#TODO check if $TMPDIR has enough free mem
 	out=$in
 	[[ $4 && -v globoutput ]] && out=$globoutput/${2##*/}${1:+/$1}
@@ -443,7 +444,7 @@ compressFile() {	# warning: $1 can be empty
 	rm -f "$tmp2"
 	[ -v globkeeptime ] && touch -md"$mtime" "$tmp" && touch -ad"$atime" "$tmp"
 	if [ $4 ]
-	then sem --fg --id "$globstatsfile" 'set -- $(<"$globstatsfile"); printf "$(('$size'+$1))\n$(('$3'+$2))\n$((1+$3))\n" >"$globstatsfile"'  # use a semaphore to allow only one thread to write at a time
+	then sem --id "$globstatsfile" 'set -- $(<"$globstatsfile"); printf "$(('$size'+$1))\n$(('$3'+$2))\n$((1+$3))\n" >"$globstatsfile"'  # use a semaphore to allow only one thread to write at a time
 		[[ -v globoutput && ! -v globupdate && -e "$out" ]] && { warning "'$out' already exists, not updated. Compressed version here: '$tmp'.\nRerun with -y to overwrite files in output directory, or with -p to add a prefix.";} || { mv "$tmp" "$out"; chown -f --reference="$in" "$out"; chmod -f --reference="$in" "$out";}
 	else mv "$tmp" "$out"
 	fi
