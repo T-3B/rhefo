@@ -48,9 +48,6 @@ INPUT can be folder or file, and several INPUTs can be given.
 List of options (global ones first, then grouped by file type):
 --help | -h
   print help; use `-h` for options summary, `--help` for full help message
---glob-archnorecur	worse compression
-  if set, do not compress embedded files in archives (no "recursion")
-  for tar-based files, both compression (gz/xz/...) & tar are still optimized
 --glob-filemask=<mask> | -m <mask>
   only filenames matching the <mask> will be optimized (e.g. "*.mp3")
 --glob-insane | -9	better compression
@@ -65,6 +62,8 @@ List of options (global ones first, then grouped by file type):
   if set, all lossy flags are set (except the more agressive --glob-strip)
   lossy flags *only* act on metadata; most of time they remove what
     is not really needed (such as the version of FLAC encoder)
+--glob-norecur		worse compression, faster
+  if set, do not compress embedded files (no "recursion")
 --glob-output=<path> | -o <path>
   <path> is output folder; default: inplace (overwrite input files)
   even if set, --glob-tmp is still used
@@ -139,7 +138,7 @@ find -name "*.flac" -type f -print0 | xargs -0 rhefo -o /outdir' |\
 parseArgs() {  # not using `local` vars because this fct is only exectued once
 	[ $(printf '\1' | od -dAn) = 1 ] || error 'This script was not tested on BIG ENDIAN devices. I mainly use `printf %x` with\nnumbers of up to 4 bytes.\nPLEASE, open an issue and if you have time HELP ME supporting this architecture\nby simply testing! This would really help a lot, since I only have little-endian\ndevices. Seriously, please.\n'
 	getopt -T && { error 'Your `getopt` is not compatible with this script. Open an issue.' 4;}
-	args=$(getopt -o hm:9j:klno:p:st:y -l help,glob-archnorecur,glob-filemask:,glob-insane,glob-jobs:,glob-keeptime,glob-lossy,glob-output:,glob-prefix:,glob-strip,glob-threads:,glob-tmp:,glob-update,flac-insane,flac-lossy,flac-subset,gzip-insane,gzip-lossy,mp3-lossy,png-insane,zip-insane -n rhefo -s bash -- "$@")
+	args=$(getopt -o hm:9j:klno:p:st:y -l help,glob-filemask:,glob-insane,glob-jobs:,glob-keeptime,glob-lossy,glob-norecur,glob-output:,glob-prefix:,glob-strip,glob-threads:,glob-tmp:,glob-update,flac-insane,flac-lossy,flac-subset,gzip-insane,gzip-lossy,mp3-lossy,png-insane,zip-insane -n rhefo -s bash -- "$@")
 	(($?)) && error 'Could not parse args. See the help message `rhefo -h`.'
 	TMPDIR=/dev/shm  # mktemp uses directly TMPDIR, so set it instead of another variable globtmp (or we should specify this variable as an argument)
 	eval set -- "$args"
@@ -147,13 +146,13 @@ parseArgs() {  # not using `local` vars because this fct is only exectued once
 	do case "$1" in
 			-h)						echo "${help%%$'\n'*}"; echo "$help" | grep '\[;33m'; echo 'Run `rhefo --help` for the full help.'; exit;;
 			--help)					echo "$help"; exit;;
-			--glob-archnorecur)		globarchnorecur=;;
 			-m | --glob-filemask)	[ "$2" ] || error "Filemask is empty."; globfilemask=$2; shift;;
 			-9 | --glob-insane)		flacinsane=;gzipinsane=;pnginsane=;zipinsane=;;
 			-j | --glob-jobs)		((0<$2)) || error "Wrong jobs int: '$2'."; globjobs=$2; shift;;
 			-k | --glob-keeptime)	globkeeptime=;;
 			-l | --glob-lossy)		gziplossy=;flaclossy=;mp3lossy=;;
 			-o | --glob-output) 	[[ -d "$2" || -w "$2" ]] || error "Output directory '$2' does not exist or cannot write to it."; globoutput=$(realpath "$2" 2>/dev/null); shift;;
+			--glob-norecur)			globnorecur=;;
 			-p | --glob-prefix)		[ "$2" ] || error 'Prefix is empty.'; globprefix=$2; shift;;
 			-s | --glob-strip)		globstrip=;gziplossy=;flaclossy=;mp3lossy=;;
 			-t | --glob-threads)	((0<$2 && $(nproc --all)>=$2)) || error "Wrong threads int: '$2'."; taskset -acp 0$((-$2+1)) $$ >/dev/null; shift;;  # restrict this script to use the first <N> processors
@@ -256,8 +255,10 @@ ffCompressStreams() {
 	# [ ${globnotest-x} ] && [ "$()" != "$()" ] && { echo "$tmp: recompression was NOT lossless. You should open an issue. Input file was kept.">&2; mv "9$tmp" "$tmp";}  #TODO
 }
 
-# $1=filepath	$2=prefixpath	$3=filesize		$4=inIsNotTMP		("$2/$1" = full absolute input path)	(do NOT set $4 when this is a subcall from another compressFile - i.e. when compressFile a file from an extracted ZIP file); none can have spaces etc
+# TODO can't we drop $4 and use $3 instead ?
+# $1=filepath	$2=prefixpath	$3=filesize		$4=inIsNotTMP		("$2/$1" = full absolute input path)	(do NOT set $4 when this is a subcall from another compressFile - e.g. when compressFile a file from an extracted ZIP file); none can have spaces etc
 compressFile() {	# warning: $1 can be empty
+	[ ${4-${globnorecur+a}} ] && return  # if this is a subcall compressFile and globnorecur is set, then do not optimize this file (as it's an embedded one)
 	set -a  # export everything automaticall (e.g. sub-parallel calls)
 	local a p v  # variables for temporary/intermediate values, ONLY SET THEM IN THE CASE SWITCH
 	local atime mtime size mime in=$2${1:+/$1} tmp tmpname tmp2 out
@@ -282,7 +283,7 @@ compressFile() {	# warning: $1 can be empty
 			p=${p##* }  # p= original decomp filename
 			tmp2=${tmp2%.*}  # TODO remove any extension, or only if extension is GZ (case *in*sensitive) ?
 			gzip -dc "$tmp" >"$tmp2"
-			[[ -v globarchnorecur && $(file -b --mime-type "$tmp2") != application/x-tar ]] || compressFile "$tmp2"  # Only compressFile if it is either tar or if globarchnorecur is not set
+			compressFile "$tmp2"
 			cd "$(mktemp -d)"
 			mv "$tmp" "$p"  # TODO not safe at all, and use tmp2 (not tmp)
 			gzip -1c$([[ -v gziplossy || "$p.gz" = "$tmpname" ]] && echo n) "$p" >"$tmp"
@@ -310,7 +311,7 @@ compressFile() {	# warning: $1 can be empty
 			v=$(mktemp -d)
 			tar xf "$tmp" -C"$v"
 			rm "$tmp"
-			[ -v globarchnorecur ] || compressTmpFolder "$v"
+			compressTmpFolder "$v"
 			find "$v" \( ! -type d -o -empty \) -printf %P\\0 | tar cf "$tmp" -b1 --no-recursion --null -C"$v" -T-  # use `find` to not store any prefix (`./`) in tar contents; by default `tar` uses 20x512 bytes block for alignment, use `-b1` for only one; do not store non-empty dir as a separate element in the tar
 			rm -r "$v";;
 		application/zip | application/zip-compressed | application/x-zip-compressed)
@@ -327,7 +328,7 @@ compressFile() {	# warning: $1 can be empty
 			p=$(zipdetails "$tmp" | grep Compression\ Method | grep -vce "0008 'Deflated'" -e "0000 'Stored'")  # count all embedded files stored in another method than Deflate or Store
 			7zz x "$tmp" -o"$v" >/dev/null
 			rm "$tmp"
-			[ -v globarchnorecur ] || compressTmpFolder "$v"
+			compressTmpFolder "$v"
 			if [ -v zipnodeflate ] || ((p))
 			then : # TODO
 			# TODOOOOOOOOOOOOOOOOOOOO remove zopfli_mrkrzych00 since it's slooooow; or create a ZIP per file (using zopfli_mrkrzych00 since it's the only one I know forcing compression mode even if output is bigger), then ECT'd them in parallel and finally merge them
@@ -452,7 +453,7 @@ compressFile() {	# warning: $1 can be empty
 
 # only one argument, the folder where we extracted the archive contents
 compressTmpFolder() {
-	find "$1" -type f -printf '%s\0%P\0%H\0' | perl -0ne 'push @rec, $_; if ($#rec == 2) { push @items, join("", @rec); @rec = (); } END { print(join("", sort { $b <=> $a } @items)) }' | parallel -0L3 --lb compressFile {2} {3} {1}
+	[ -v globnorecur ] && find "$1" -type f -printf '%s\0%P\0%H\0' | perl -0ne 'push @rec, $_; if ($#rec == 2) { push @items, join("", @rec); @rec = (); } END { print(join("", sort { $b <=> $a } @items)) }' | parallel -0L3 --lb compressFile {2} {3} {1}
 }
 
 warning() { printf "\033[1;33mW: %s\033[0m\n" "$1" >&2;}
@@ -461,7 +462,7 @@ error() { printf "\033[1;31mE: %s\033[0m\n" "$1" >&2; exit ${2:-1};}
 
 ctrlCHandler() {
 	if [ -v ctrlc ]; then
-		[ $ctrlc ] || kill $(pstree -ap $$ | grep -m1 parallel | grep -oP '^.*?\K[0-9]+') 2>/dev/null  # we could add `exit 130`, but it's better to only kill `parallel` so we can print information about already processed files (which is done really fast)
+		[ $ctrlc ] || kill $(pstree -ap $$ | grep -m1 parallel | grep -oP '^.*?\K[0-9]+') 2>/dev/null  # we could use `exit 130`, but it's better to only kill `parallel` so we can print information about already processed files (which is done really fast)
 		ctrlc=g  # only allow 2 Ctrl+C signals, after that we simply catch and ignore them
 	else
 		ctrlc=
