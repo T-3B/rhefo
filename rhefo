@@ -258,7 +258,7 @@ ffCompressStreams() {
 # TODO can't we drop $4 and use $3 instead ?
 # $1=filepath	$2=prefixpath	$3=filesize		$4=inIsNotTMP		("$2/$1" = full absolute input path)	(do NOT set $4 when this is a subcall from another compressFile - e.g. when compressFile a file from an extracted ZIP file); none can have spaces etc
 compressFile() {	# warning: $1 can be empty
-	[ ${4-${globnorecur+a}} ] && return  # if this is a subcall compressFile and globnorecur is set, then do not optimize this file (as it's an embedded one)
+	[[ ! $4 && -v globnorecur ]] && return  # if this is a subcall compressFile and globnorecur is set, then do not optimize this file (as it's an embedded one)
 	set -a  # export everything automaticall (e.g. sub-parallel calls)
 	local a p v  # variables for temporary/intermediate values, ONLY SET THEM IN THE CASE SWITCH
 	local atime mtime size mime in=$2${1:+/$1} tmp tmpname tmp2 out
