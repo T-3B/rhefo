@@ -72,7 +72,7 @@ List of options (global ones first, then grouped by file type):
 --glob-strip | -s	better compression, lossy
   if set, strip/remove ALL metadata/exif; see the less aggressive --glob-lossy
 --glob-threads=<N> | -t<N>
-  <N> logic processors used by this script; default: all (see --glob-jobs)
+  <N> logic cpu processors used by this script; default: all (see --glob-jobs)
 --glob-tmp=<path> <path>
   <path> is a directory intensively used for r/w; default is `/dev/shm`
   if does not exist, or cannot r/w in it, defaults to `/tmp`
@@ -155,7 +155,7 @@ parseArgs() {  # not using `local` vars because this fct is only exectued once
 			--glob-norecur)			globnorecur=;;
 			-p | --glob-prefix)		[ "$2" ] || error 'Prefix is empty.'; globprefix=$2; shift;;
 			-s | --glob-strip)		globstrip=;gziplossy=;flaclossy=;mp3lossy=;;
-			-t | --glob-threads)	((0<$2 && $(nproc --all)>=$2)) || error "Wrong threads int: '$2'."; taskset -acp 0$((-$2+1)) $$ >/dev/null; shift;;  # restrict this script to use the first <N> processors
+			-t | --glob-threads)	((0<$2 && $2<=$(nproc --all))) || error "Wrong threads int: '$2'."; threadlimit $2; shift;;
 			--glob-tmp)				[[ -d "$2" && -r "$2" && -w "$2" ]] && TMPDIR=$(realpath "$2") || { warning 'Could not use given --glob-tmp, using "/tmp" instead.'; TMPDIR=/tmp;}; shift;;
 			-y | --glob-update)		globupdate=;;
 			--flac-insane)			flacinsane=;;
@@ -201,6 +201,33 @@ parseArgs() {  # not using `local` vars because this fct is only exectued once
 	} &  # all the code is done in background so it won't be killed by Ctrl+C
 	while ! wait; do :; done  # each Ctrl+C will kill `wait` (1st hit: no new job, 2nd: kill parallel)
 }
+
+# restrict this script to use the $1 *least used* CPU processors (or threads); inspired by https://unix.stackexchange.com/a/668936/510054
+threadlimit() {
+    # idea is to init cCpus with 1st read, then copy to lCpus, then init cCpus with a 2nd read; compute usage, sort, and finally taskset to restrict usage of cpu
+	# could have used `taskset -acp 0-$(($2-1)) $$`, but doesn't "work" if > 1 instance of RHEFO is running
+	[ $(nproc) = $(nproc --all) ] || { warning 'This script does NOT have access to all cpu threads, ignoring --glob-threads.'; return;}
+	lCpus=() # last readings
+	cCpus=() # all cpus
+	for val in $(grep ^cpu\\S /proc/stat; sleep 1; grep ^cpu\\S /proc/stat)
+	do	if [[ $val = cpu* ]]
+		then [ -v cCpu ] && { cCpus+=("${cCpu[*]}"); [ $val = cpu0 ] && { lCpus=("${cCpus[@]}"); cCpus=();};}
+			cCpu=(0 0)  # current cpu (cpuIdleTicks cpuBusyTicks)
+			i=0  # column index
+		else ((cCpu[++i!=4&&i!=5]+=val))  # position 4 is the idle, position 5 is the i/o wait (also idle introduced 2.5.41) https://www.idnt.net/en-US/kb/941772
+		fi
+	done
+	cCpus+=("${cCpu[*]}")  # include the last cpu
+
+	x=0
+	taskset -acp $(for cpu in "${cCpus[@]}"
+		do	cCpu=($cpu)
+			lCpu=(${lCpus[$x]})
+			dTotal=$((cCpu+cCpu[1]-lCpu-lCpu[1]))
+			echo "$((100000*(dTotal-cCpu+lCpu)/(dTotal?dTotal:1))) $((x++))"
+		done | sort -n | head -$1 | cut -d' ' -f2 | paste -sd,) $$ >/dev/null
+}
+
 
 # TODO better to change these2= 2 fct to only support reading data from stdin ?
 # convert binary data to hexadecimal;	$1=filepath (or empty for stdin)	$2=index/offset of byte to print (in decimal)	$3=nbr of bytes to print (if no set then 1)
