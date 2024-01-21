@@ -68,7 +68,7 @@ List of options (global ones first, then grouped by file type):
   <path> is output folder; default: inplace (overwrite input files)
   even if set, --glob-tmp is still used
 --glob-prefix=<prefix> | -p <prefix>
-  Prefix to add to all processed files (--blob-output can still be used)
+  Prefix to add to all processed files (--glob-output can still be used)
 --glob-strip | -s	better compression, lossy
   if set, strip/remove ALL metadata/exif; see the less aggressive --glob-lossy
 --glob-threads=<N> | -t<N>
@@ -204,27 +204,28 @@ parseArgs() {  # not using `local` vars because this fct is only exectued once
 
 # restrict this script to use the $1 *least used* CPU processors (or threads); inspired by https://unix.stackexchange.com/a/668936/510054
 threadlimit() {
-    # idea is to init cCpus with 1st read, then copy to lCpus, then init cCpus with a 2nd read; compute usage, sort, and finally taskset to restrict usage of cpu
+    # idea is to init curr with 1st read, then copy to last, then init curr with a 2nd read; compute usage, sort, and finally taskset to restrict usage of cpu
 	# could have used `taskset -acp 0-$(($2-1)) $$`, but doesn't "work" if > 1 instance of RHEFO is running
+	local l last c curr val 
 	[ $(nproc) = $(nproc --all) ] || { warning 'This script does NOT have access to all cpu threads, ignoring --glob-threads.'; return;}
-	lCpus=() # last readings
-	cCpus=() # all cpus
+	last=() # last readings
+	curr=() # all cpus
 	for val in $(grep ^cpu\\S /proc/stat; sleep 1; grep ^cpu\\S /proc/stat)
 	do	if [[ $val = cpu* ]]
-		then [ -v cCpu ] && { cCpus+=("${cCpu[*]}"); [ $val = cpu0 ] && { lCpus=("${cCpus[@]}"); cCpus=();};}
-			cCpu=(0 0)  # current cpu (cpuIdleTicks cpuBusyTicks)
+		then [ -v c ] && { curr+=("${c[*]}"); [ $val = cpu0 ] && { last=("${curr[@]}"); curr=();};}
+			c=(0 0)  # current cpu (cpuIdleTicks cpuBusyTicks)
 			i=0  # column index
-		else ((cCpu[++i!=4&&i!=5]+=val))  # position 4 is the idle, position 5 is the i/o wait (also idle introduced 2.5.41) https://www.idnt.net/en-US/kb/941772
+		else ((c[++i!=4&&i!=5]+=val))  # position 4 is the idle, position 5 is the i/o wait (also idle introduced 2.5.41) https://www.idnt.net/en-US/kb/941772
 		fi
 	done
-	cCpus+=("${cCpu[*]}")  # include the last cpu
+	curr+=("${c[*]}")  # include the last cpu
 
 	x=0
-	taskset -acp $(for cpu in "${cCpus[@]}"
-		do	cCpu=($cpu)
-			lCpu=(${lCpus[$x]})
-			dTotal=$((cCpu+cCpu[1]-lCpu-lCpu[1]))
-			echo "$((100000*(dTotal-cCpu+lCpu)/(dTotal?dTotal:1))) $((x++))"
+	taskset -acp $(for c in "${curr[@]}"
+		do	c=($c)
+			l=(${last[$x]})
+			dTot=$((c+c[1]-l-l[1]))
+			echo "$((100000*(dTot-c+l)/(dTot?dTot:1))) $((x++))"
 		done | sort -n | head -$1 | cut -d' ' -f2 | paste -sd,) $$ >/dev/null
 }
 
