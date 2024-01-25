@@ -202,6 +202,8 @@ parseArgs() {  # not using `local` vars because this fct is only exectued once
 	while ! wait; do :; done  # each Ctrl+C will kill `wait` (1st hit: no new job, 2nd: kill parallel)
 }
 
+
+# TODO no need for %age of use, what about min(cpuBusyTicks_delta) ?
 # restrict this script to use the $1 *least used* CPU processors (or threads); inspired by https://unix.stackexchange.com/a/668936/510054
 threadlimit() {
     # idea is to init curr with 1st read, then copy to last, then init curr with a 2nd read; compute usage, sort, and finally taskset to restrict usage of cpu
@@ -489,14 +491,15 @@ warning() { printf "\033[1;33mW: %s\033[0m\n" "$1" >&2;}
 error() { printf "\033[1;31mE: %s\033[0m\n" "$1" >&2; exit ${2:-1};}
 
 ctrlCHandler() {
-	if [ -v ctrlc ]; then
-		[ $ctrlc ] || kill $(pstree -ap $$ | grep -m1 parallel | grep -oP '^.*?\K[0-9]+') 2>/dev/null  # we could use `exit 130`, but it's better to only kill `parallel` so we can print information about already processed files (which is done really fast)
+	if [ -v ctrlc ]
+	then [ $ctrlc ] || kill $(pstree -ap $$ | grep -m1 parallel | grep -oP '^.*?\K[0-9]+') 2>/dev/null  # we could use `exit 130`, but it's better to only kill `parallel` so we can print information about already processed files (which is done really fast)
 		ctrlc=g  # only allow 2 Ctrl+C signals, after that we simply catch and ignore them
 	else
 		ctrlc=
-		kill -HUP $(pstree -ap $$ | grep parallel | grep -oP '^.*?\K[0-9]+') 2>/dev/null  # do NOT start any new job in any `parallel` (even grandchild processes)
-		sleep .1  # so the following msg will be shown *after* parallel's output about no new job
-		printf "\r%${COLUMNS}s\r\033[1;36mHit Ctrl+C again to stop all jobs.\033[0m\n" ''  # erase progress bar from parallel, then print msg
+		{	kill -HUP $(pstree -ap $$ | grep parallel | grep -oP '^.*?\K[0-9]+') 2>/dev/null  # do NOT start any new job in any `parallel` (even grandchild processes)
+			sleep .1  # so the following msg will be shown *after* parallel's output about no new job
+			printf "\r%${COLUMNS}s\r\033[1;36mHit Ctrl+C again to stop all jobs.\033[0m\n" ''  # erase progress bar from parallel, then print msg
+		} &  # run in background so if we hit **again** Ctrl+C super fast (< .1 sec), ctrlCHandler won't be killed
 	fi
 }
 
