@@ -30,7 +30,7 @@
 # put in a file what we can still use in mem to be safe, if not enough space wait until we can (can we do that with semaphores with parallel ?)
 # => add a setting "globmaxmem" to limit the maximum memory used at the same time in the TMPDIR folder (parallel has some parameter to suspend jobs if not enough mem - search for "mem" in man page)
 
-# TODO use cpulimit when available, otherwise use what we already use (taskset). cpulimit allows to set % of cpu usage, while taskset forces to use x first cores
+# TODO add --glob-nosort to not sort input by size (if input is given with something like find)
 
 set -a  # export var+fct automatically
 set -m  # All processes run in a separate process group (needed for Ctrl+C "trick")
