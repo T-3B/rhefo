@@ -203,32 +203,14 @@ parseArgs() {  # not using `local` vars because this fct is only exectued once
 }
 
 
-# TODO no need for %age of use, what about min(cpuBusyTicks_delta) ?
-# restrict this script to use the $1 *least used* CPU processors (or threads); inspired by https://unix.stackexchange.com/a/668936/510054
+# restrict this script to use the $1 *least used* CPU processors (or threads)
 threadlimit() {
-    # idea is to init curr with 1st read, then copy to last, then init curr with a 2nd read; compute usage, sort, and finally taskset to restrict usage of cpu
-	# could have used `taskset -acp 0-$(($2-1)) $$`, but doesn't "work" if > 1 instance of RHEFO is running
-	local l last c curr val 
+    # sum idle ($4) and io-wait ($5) ticks, substract between 2 reads (1 sec between), take $1 biggest numbers (will be our cpu threads to use with taskset)
+	# could have used `taskset -acp 0-$(($1-1)) $$`, but doesn't "work" if > 1 instance of RHEFO is running
 	[ $(nproc) = $(nproc --all) ] || { warning 'This script does NOT have access to all cpu threads, ignoring --glob-threads.'; return;}
-	last=() # last readings
-	curr=() # all cpus
-	for val in $(grep ^cpu\\S /proc/stat; sleep 1; grep ^cpu\\S /proc/stat)
-	do	if [[ $val = cpu* ]]
-		then [ -v c ] && { curr+=("${c[*]}"); [ $val = cpu0 ] && { last=("${curr[@]}"); curr=();};}
-			c=(0 0)  # current cpu (cpuIdleTicks cpuBusyTicks)
-			i=0  # column index
-		else ((c[++i!=4&&i!=5]+=val))  # position 4 is the idle, position 5 is the i/o wait (also idle introduced 2.5.41) https://www.idnt.net/en-US/kb/941772
-		fi
-	done
-	curr+=("${c[*]}")  # include the last cpu
 
-	x=0
-	taskset -acp $(for c in "${curr[@]}"
-		do	c=($c)
-			l=(${last[$x]})
-			dTot=$((c+c[1]-l-l[1]))
-			echo "$((100000*(dTot-c+l)/(dTot?dTot:1))) $((x++))"
-		done | sort -n | head -$1 | cut -d' ' -f2 | paste -sd,) $$ >/dev/null
+	taskset -acp $(paste <(awk '/^cpu[0-9]/{print $4+$5}' /proc/stat) <(sleep 1; awk '/^cpu[0-9]/{print $4+$5}' /proc/stat)
+					| awk '{print $2-$1, NR-1}' | sort -n | tail -$1 | cut -d' ' -f2 | paste -sd,) $$ >/dev/null
 }
 
 
