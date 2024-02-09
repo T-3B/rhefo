@@ -209,7 +209,7 @@ threadlimit() {
 	# could have used `taskset -acp 0-$(($1-1)) $$`, but doesn't "work" if > 1 instance of RHEFO is running
 	[ $(nproc) = $(nproc --all) ] || { warning 'This script does NOT have access to all cpu threads, ignoring --glob-threads.'; return;}
 
-	taskset -acp $(paste <(awk '/^cpu[0-9]/{print $4+$5}' /proc/stat) <(sleep 1; awk '/^cpu[0-9]/{print $4+$5}' /proc/stat)
+	taskset -acp $(paste <(awk '/^cpu[0-9]/{print $4+$5}' /proc/stat) <(sleep 1; awk '/^cpu[0-9]/{print $4+$5}' /proc/stat) \
 					| awk '{print $2-$1, NR-1}' | sort -n | tail -$1 | cut -d' ' -f2 | paste -sd,) $$ >/dev/null
 }
 
