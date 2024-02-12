@@ -205,11 +205,11 @@ parseArgs() {  # not using `local` vars because this fct is only exectued once
 
 # restrict this script to use the $1 *least used* CPU processors (or threads)
 threadlimit() {
-    # sum idle ($4) and io-wait ($5) ticks, substract between 2 reads (1 sec between), take $1 biggest numbers (will be our cpu threads to use with taskset)
+    # sum idle ($4) and io-wait ($5) ticks, substract between 2 reads (5 sec between), take $1 biggest numbers (will be our cpu threads to use with taskset)
 	# could have used `taskset -acp 0-$(($1-1)) $$`, but doesn't "work" if > 1 instance of RHEFO is running
 	[ $(nproc) = $(nproc --all) ] || { warning 'This script does NOT have access to all cpu threads, ignoring --glob-threads.'; return;}
 
-	taskset -acp $(paste <(awk '/^cpu[0-9]/{print $4+$5}' /proc/stat) <(sleep 1; awk '/^cpu[0-9]/{print $4+$5}' /proc/stat) \
+	taskset -acp $(paste <(awk '/^cpu[0-9]/{print $4+$5}' /proc/stat) <(sleep 5; awk '/^cpu[0-9]/{print $4+$5}' /proc/stat) \
 					| awk '{print $2-$1, NR-1}' | sort -n | tail -$1 | cut -d' ' -f2 | paste -sd,) $$ >/dev/null
 }
 
@@ -267,10 +267,9 @@ ffCompressStreams() {
 	# [ ${globnotest-x} ] && [ "$()" != "$()" ] && { echo "$tmp: recompression was NOT lossless. You should open an issue. Input file was kept.">&2; mv "9$tmp" "$tmp";}  #TODO
 }
 
-# TODO can't we drop $4 and use $3 instead ?
-# $1=filepath	$2=prefixpath	$3=filesize		$4=inIsNotTMP		("$2/$1" = full absolute input path)	(do NOT set $4 when this is a subcall from another compressFile - e.g. when compressFile a file from an extracted ZIP file); none can have spaces etc
+# $1=filepath	$2=prefixpath	$3=filesize		("$2/$1" = full absolute input path)	(do NOT set $3 when this is a subcall from another compressFile - e.g. when compressFile a file from an extracted ZIP file); none can have spaces
 compressFile() {	# warning: $1 can be empty
-	[[ ! $4 && -v globnorecur ]] && return  # if this is a subcall compressFile and globnorecur is set, then do not optimize this file (as it's an embedded one)
+	[[ ! $3 && -v globnorecur ]] && return  # if this is a subcall compressFile and globnorecur is set, then do not optimize this file (as it's an embedded one)
 	set -a  # export everything automaticall (e.g. sub-parallel calls)
 	local a p v  # variables for temporary/intermediate values, ONLY SET THEM IN THE CASE SWITCH
 	local atime mtime size mime in=$2${1:+/$1} tmp tmpname tmp2 out
@@ -279,9 +278,9 @@ compressFile() {	# warning: $1 can be empty
 	tmp=$(mktemp --tmpdir --suff=."${in##*/}" XXX)  # always use $tmp, even if recompressing the files that were inside an archive, to be safe with wildcards "$tmp".* (when bruteforcing compression args) - also added a dot (safe to drop the extension for some compression formats like GZ)
 	#TODO check if $TMPDIR has enough free mem
 	out=$in
-	[[ $4 && -v globoutput ]] && out=$globoutput/${2##*/}${1:+/$1}
-	[[ $4 && -v globprefix ]] && out=${out%/*}/$globprefix${out##*/}
-	[[ $4 && (-v globoutput || -v globprefix) && ! -v globupdate && -e "$out" ]] && { warning "'$out' already exists, file not compressed nor updated. Rerun with -y to overwrite files in output directory, or with -p to add a prefix.";rm -f "$tmp";return;}
+	[[ $3 && -v globoutput ]] && out=$globoutput/${2##*/}${1:+/$1}
+	[[ $3 && -v globprefix ]] && out=${out%/*}/$globprefix${out##*/}
+	[[ $3 && (-v globoutput || -v globprefix) && ! -v globupdate && -e "$out" ]] && { warning "'$out' already exists, file not compressed nor updated. Rerun with -y to overwrite files in output directory, or with -p to add a prefix.";rm -f "$tmp";return;}
 	cp "$in" "$tmp"  # TODO remove this and insert it in each switch case (since we need to read it once, read it when needed - and run directly a command with the processed data)
 	size=${3-$(wc -c <"$tmp")}
 	tmpname=${tmp##*/}
@@ -338,7 +337,7 @@ compressFile() {	# warning: $1 can be empty
 			# TODOOOOOOO input archived files do not keep their orig date
 			v=$(mktemp -d)
 			p=$(zipdetails "$tmp" | grep Compression\ Method | grep -vce "0008 'Deflated'" -e "0000 'Stored'")  # count all embedded files stored in another method than Deflate or Store
-			7zz x "$tmp" -o"$v" >/dev/null
+			7z x "$tmp" -o"$v" >/dev/null
 			rm "$tmp"
 			compressTmpFolder "$v"
 			if [ -v zipnodeflate ] || ((p))
@@ -346,7 +345,7 @@ compressFile() {	# warning: $1 can be empty
 			# TODOOOOOOOOOOOOOOOOOOOO remove zopfli_mrkrzych00 since it's slooooow; or create a ZIP per file (using zopfli_mrkrzych00 since it's the only one I know forcing compression mode even if output is bigger), then ECT'd them in parallel and finally merge them
 			# TODO do not call zopfli if all files are compressed (no file is in store mode - zipdetails)
 			else (cd "$v"/..; zopfli_mrkrzych00 --i1 --v0 --zip --dir "${v##*/}"  # `zip`, `7z` will both use 'Stored' if Deflate is larger, but not zopfli_mrkrzych00 - really usefull since ECT is the best Deflate compressor but only recompress Deflate streams (not 'Stored') and needs a zip as input
-					cd "${v##*/}"; find -empty -printf %P\\0 | xargs -r0 7zz a ../"${v##*/}".zip)  # zopfli won't store dirs as separate stream in zip. WARNING zopfli drop empty dirs and files!
+					cd "${v##*/}"; find -empty -printf %P\\0 | xargs -r0 7z a ../"${v##*/}".zip)  # zopfli won't store dirs as separate stream in zip. WARNING zopfli drop empty dirs and files!
 				rm -r "$v"
 				mv "$v".zip "$tmp"
 				ect -9${zipinsane+9999} -quiet -zip --strict --mt-deflate "$tmp"  # using --strict makes sure ECT does not try to optimize archived files (so it will only optimize Deflate compression in ZIP, not files themselves)
@@ -456,8 +455,8 @@ compressFile() {	# warning: $1 can be empty
 	(((size-=$(wc -c <"$tmp"))<0)) && { warning "'$in': could not compress further. Input file was kept."; cp "$in" "$tmp"; size=0;}
 	rm -f "$tmp2"
 	[ -v globkeeptime ] && touch -md"$mtime" "$tmp" && touch -ad"$atime" "$tmp"
-	if [ $4 ]
-	then sem --id "$globstatsfile" 'set -- $(<"$globstatsfile"); printf "$(('$size'+$1))\n$(('$3'+$2))\n$((1+$3))\n" >"$globstatsfile"'  # use a semaphore to allow only one thread to write at a time
+	if [ $3 ]
+	then sem --id "$globstatsfile" 'set -- $(<"$globstatsfile"); printf "$(('$size'+$1))\n$(('$3'+$2))\n$((1+$3))\n" >"$globstatsfile"'  # use a semaphore to allow only one thread to write stats at a time
 		[[ -v globoutput && ! -v globupdate && -e "$out" ]] && { warning "'$out' already exists, not updated. Compressed version here: '$tmp'.\nRerun with -y to overwrite files in output directory, or with -p to add a prefix.";} || { mv "$tmp" "$out"; chown -f --reference="$in" "$out"; chmod -f --reference="$in" "$out";}
 	else mv "$tmp" "$out"
 	fi
