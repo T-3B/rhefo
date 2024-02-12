@@ -18,6 +18,8 @@
 # for `dd`, if writing to existing output file, `dd status=none bs=4 count=1 seek=6 conv=notrunc oflag=seek_bytes iflag=fullblock of="$tmp"`
 
 # features to add, fixes needed, etc are written with a 'TODO' in capital letters; 'todo' is written for stuff to change with very very low priority (mainly a nice thing to have, but almost useless because too rare), everything completely works without issues even with 'todo'
+# formats (mime-types) which are completely finished and supported are marked 'DONE'
+
 
 # TODO add globarchnoroot to remove root folder if there is only one folder
 # TODO add option to remove __MACOSX folder from inside archives add to globarch-lossy
@@ -31,6 +33,7 @@
 # => add a setting "globmaxmem" to limit the maximum memory used at the same time in the TMPDIR folder (parallel has some parameter to suspend jobs if not enough mem - search for "mem" in man page)
 
 # TODO add --glob-nosort to not sort input by size (if input is given with something like find)
+# TODO change zip-nodeflate to zip-broken (so use also flac-broken); *-broken == better comp but (far) less compatibility/support
 
 set -a  # export var+fct automatically
 set -m  # All processes run in a separate process group (needed for Ctrl+C "trick")
@@ -203,7 +206,7 @@ parseArgs() {  # not using `local` vars because this fct is only exectued once
 }
 
 
-# restrict this script to use the $1 *least used* CPU processors (or threads)
+# restrict this script to use the $1 *least used* CPU processors
 threadlimit() {
     # sum idle ($4) and io-wait ($5) ticks, substract between 2 reads (5 sec between), take $1 biggest numbers (will be our cpu threads to use with taskset)
 	# could have used `taskset -acp 0-$(($1-1)) $$`, but doesn't "work" if > 1 instance of RHEFO is running
@@ -288,7 +291,7 @@ compressFile() {	# warning: $1 can be empty
 
 	# TODO if mime=application/octet-stream, use FFmpeg to try to get the container name (or use a file mapping filextensions to mime-type)
 	case $(file -b --mime-type "$tmp") in  # see here for known MIME types: /usr/share/mime/types
-		application/gzip | application/x-gzip)
+		application/gzip | application/x-gzip)	# DONE
 			# tested tools: zopfli, zopfli MrKrzYch00's mod, gzip, 7z, minigzip (from minizip-ng). Tested on all files from silesia.tar (ect is far faster than zopfli(mod), and always gives smaller files - even when file is 1KB; ECT << zopfli < zopfli_mrkrzych00 << gzip); zopfli_mrkrzych00 --i9999 --mui999 --slowfix --t0 --pass9 --all androidsdk.svg
 			p=$(gzip -Nl "$tmp")
 			p=${p##* }  # p= original decomp filename
@@ -301,24 +304,23 @@ compressFile() {	# warning: $1 can be empty
 			cd - >/dev/null
 			rm -r "$OLDPWD"
 			ect -9${gzipinsane+9999} --mt-deflate -gzip --strict "$tmp";;  # using strict won't recompress embedded file
-		application/pdf)  # there is also `mutool extract`.
+		application/pdf)  # TODO there is also `mutool extract`;	for lossless recompression check, see `mutool draw` (converts pdf to vector graphics)
 			# TODO: best combination: cpdf -> pdfsizeopt -> mutool clean -> qpdf
 			# Warning I don't think it's always the same order giving smallest file
 			mutool clean -gggg "$tmp" "$tmp"  # at least clean once
 			p=$(wc -c <"$tmp")
-			while v=$p; mutool clean -gggg "$tmp" "$tmp"; p=$(wc -c <"$tmp"); ((p<v)); do :; done  # repeat as many time to "garbage collect objects/streams + merge/reuse duplicates + compact cross ref table", I saw a file that needed 7 iterations
+			while v=$p; mutool clean -gggg "$tmp" "$tmp"; p=$(wc -c <"$tmp"); ((p<v)); do :; done  # repeat, until size stops decreasing, "garbage collect objects/streams + merge/reuse duplicates + compact cross ref table"; I saw a file that needed 7 iterations
 			qpdf --recompress-flate --compression-level=9 --object-streams=generate --decode-level=specialized --replace-input "$tmp"  # don't use decode-level=all or bigger output
 			# TODO for lossless check, see `mutool draw` (can convert pdf to vector graphics :chad:)
 			# TODO check with pdfsizeopt (see minuimus for that, nice args), or see parser here : https://blog.didierstevens.com/programs/pdf-tools/ to extract objects
 			# pdfsizeopt needed python2, ghostscript, sam2p, png22pnm
 			# pdfsizeopt --optimize --use-pngout=yes --use-jbig2=yes --use-sam2p-pr=yes --use-image-optimizer='ect -999 -strip --mt-deflate %(targetfnq)s' in.pdf out.pdf
-			# mutool draw -w 2048 -s 5 in.pdf  # "close" to lossless checksum (`-F png` by default) will check md5 of PNG
-			# mutool draw -o page%d.svg in.pdf && sha256sum page*.svg  # will check sha256 of SVG (vectors!!!) super powerfull and works, just need temp files 
 			;;
 		application/octet-stream)  # can be many many things
-			#ffCompressStreams "$tmp";;  # TODO test for MP3
+			# TODO
 			;;
-		application/x-tar | application/x-cbt)
+		application/x-tar | application/x-cbt)  # TODO use binsort
+			# some metadata infos are not guarenteed to be kept (owner, permissions, atime/mtime)
 			v=$(mktemp -d)
 			tar xf "$tmp" -C"$v"
 			rm "$tmp"
@@ -335,15 +337,14 @@ compressFile() {	# warning: $1 can be empty
 			# tested softwares: minizip-ng, 7z, kzip, ect
 			
 			# TODOOOOOOO input archived files do not keep their orig date
+			7z l -slt "$tmp" | grep '^Method = ' | grep -qve Store -e Deflate && p=  # at least one Method is not Store nor Deflate
 			v=$(mktemp -d)
-			p=$(zipdetails "$tmp" | grep Compression\ Method | grep -vce "0008 'Deflated'" -e "0000 'Stored'")  # count all embedded files stored in another method than Deflate or Store
 			7z x "$tmp" -o"$v" >/dev/null
 			rm "$tmp"
 			compressTmpFolder "$v"
-			if [ -v zipnodeflate ] || ((p))
+			if [[ -v zipnodeflate || -v p ]]
 			then : # TODO
-			# TODOOOOOOOOOOOOOOOOOOOO remove zopfli_mrkrzych00 since it's slooooow; or create a ZIP per file (using zopfli_mrkrzych00 since it's the only one I know forcing compression mode even if output is bigger), then ECT'd them in parallel and finally merge them
-			# TODO do not call zopfli if all files are compressed (no file is in store mode - zipdetails)
+			# TODO remove zopfli_mrkrzych00 since it's really slow; replace it by writing a script forcing compression mode even if output is larger than input
 			else (cd "$v"/..; zopfli_mrkrzych00 --i1 --v0 --zip --dir "${v##*/}"  # `zip`, `7z` will both use 'Stored' if Deflate is larger, but not zopfli_mrkrzych00 - really usefull since ECT is the best Deflate compressor but only recompress Deflate streams (not 'Stored') and needs a zip as input
 					cd "${v##*/}"; find -empty -printf %P\\0 | xargs -r0 7z a ../"${v##*/}".zip)  # zopfli won't store dirs as separate stream in zip. WARNING zopfli drop empty dirs and files!
 				rm -r "$v"
@@ -355,9 +356,6 @@ compressFile() {	# warning: $1 can be empty
 			# TODO for ZIP and 7z, we should bruteforce different compression method
 			# ZIP: no (solid) block compression, so easier: each file is distinct from the others, so just bruteforce method compression and select the smallest embedded file. Deflate Deflate64 BZip2 LZMA XZ Zstd PPMd and perhaps more
 				# minizip-ng: Deflate (no flag), Bzip2, LZMA, Zstd		7zip: Deflate, Deflate64 , BZip2
-
-			# Note: with 7zip many params do not have max values (such as -mpass). Try if more than the maximum written in the manual can bring ameliorations. For Deflate ECT is still better.
-			# be really carefull since p7zip (linux) is outdated 17.0.0 while 7-zip is 22.0.1. There is a static x64 build
 			;;
 		audio/flac | audio/x-flac)  # Tested softwares (with different genres, 44.1 and 96 kHz, 16 and 24-bit, stereo): fork of reference FLAC 1.4.2 encoder https://github.com/ktmf01/flac; FLACOut.exe; CUETools.Flake.exe 2.2.2 --vbr 3 -11 -P 0 --lax --no-seektable -r 8 -e 32 -l 32 (tested different --window-method, -w, --vbr <0..4>, and did beat reference FLAC encoder *only* if I did *not* try -A functions); justinruggles' Flake
 			# Note on FLAC compression: I made several benchmarks (10 encodes with different settings for 40 wav - PCM s16 44.1 kHz - files).
