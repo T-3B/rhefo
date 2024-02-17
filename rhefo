@@ -345,6 +345,7 @@ compressFile() {	# warning: $1 can be empty
 			if [[ -v zipnodeflate || -v p ]]
 			then : # TODO
 			# TODO remove zopfli_mrkrzych00 since it's really slow; replace it by writing a script forcing compression mode even if output is larger than input
+			# TODO use zip instead of zopfli: appears to always use Deflate if using `-9`. This is fast and mem efficient since we create an archive for each file and inputs are removed (zip with many files is linear):  parallel zip -m -9 {}.zip {} ::: * && parallel zip {} --out test.zip ::: *.zip
 			else (cd "$v"/..; zopfli_mrkrzych00 --i1 --v0 --zip --dir "${v##*/}"  # `zip`, `7z` will both use 'Stored' if Deflate is larger, but not zopfli_mrkrzych00 - really usefull since ECT is the best Deflate compressor but only recompress Deflate streams (not 'Stored') and needs a zip as input
 					cd "${v##*/}"; find -empty -printf %P\\0 | xargs -r0 7z a ../"${v##*/}".zip)  # zopfli won't store dirs as separate stream in zip. WARNING zopfli drop empty dirs and files!
 				rm -r "$v"
@@ -411,13 +412,9 @@ compressFile() {	# warning: $1 can be empty
 			fi
 			# use mp3packer to add Xing frame (with real duration) of 208 bytes (ffmpeg Xing frame is 522), could be even smaller than 208 bytes if I create it myself (since strings "mp3packer" or "Lavf" are written to Xing)
 			[ -v mp3lossy ] || mp3packer -u "$tmp" "$tmp2" >/dev/null;;
-		image/jpeg)
-			#mozjpeg is better at recompressing jpgs then ECT due to some weird overhead ECT adds.  TODO
-				#assume a possible 1-2kb gain
-			
-			mv "$tmp" "$tmp.jpg"
-			ect -9 -quiet ${globstrip+-strip} "$tmp.jpg"  # ect needs correct ext
-			mv "$tmp.jpg" "$tmp";;
+		image/jpeg)  # DONE
+			# for some strange reason ect adds overhead; if globstrip is set then only drop comments (Exif, ...)
+			jpegtran -copy ${globstrip-all}${globstrip+icc} "$in" >"$tmp";;
 		image/jxl)
 			# -e 10 needs libjxl 0.8.0
 			# cjxl -e 9 -d 0 --brotli_effort=11 --num_threads=0 -I 100 -g 3 -E 11
