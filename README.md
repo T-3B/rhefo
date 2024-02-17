@@ -57,7 +57,7 @@ File type specific dependencies (see the [table below](#supported-file-types)): 
 This script also rely on several add-ins. Since they are not distributed (through package managers), I compile them myself (when needed) and host them here.\
 I provide only x86-64 and aarch64, in different branches (TODO). They are all compressed using `upx -9 --ultra-brute` (see [UPX](https://github.com/upx/upx)), compiled with optimizations: `-O3 -flto`, **static**, and generic.\
 I'm open to suggestions (as always!), and can try building them for Windows if someone manages to make this BASH script work on Windows.\
-[apngopt](https://apng.sourceforge.io/) [ECT](https://github.com/fhanau/Efficient-Compression-Tool) [MP3Packer](https://hydrogenaud.io/index.php/topic,32379.0.html) 7zz
+[apngopt](https://apng.sourceforge.io/) [ECT](https://github.com/fhanau/Efficient-Compression-Tool) [MozJPEG](https://github.com/mozilla/mozjpeg) [MP3Packer](https://hydrogenaud.io/index.php/topic,32379.0.html)
 
 ## Supported file types
 
@@ -73,13 +73,13 @@ Extension|Dependencies|Behaviour|*Default*/insane&nbsp;speed
 :---:|:---:|---|:---:
 `.flac`|`flac`|Uses [reference FLAC encoder](https://github.com/xiph/flac), extract+optimize+remux embedded pictures, (*non*-)subset file, remove/*keep* seek-table, remove/*keep* vendor string, *remove* metadata padding, remove/*keep* metadata, *normal*/insane encoding time.|N/A
 `.gz` `.tgz` `.svgz`|`gzip` `ect`|Uses [ECT](https://github.com/fhanau/Efficient-Compression-Tool), extract+optimize+remux, remove/*keep* original filename, *normal*/insane encoding time.|N/A
+`.jpg`|`mozjpeg`|Uses [MozJPEG](https://github.com/mozilla/mozjpeg), remove/*keep* metadata.
 `.mp3`|`mp3packer`|Uses [MP3Packer](https://hydrogenaud.io/index.php/topic,32379.0.html), extract+optimize+remux embedded media files, delete/*write* Xing frame, *remove*/keep metadata padding, remove/*keep* metadata.|N/A
 `.tar` `.cbt`|`tar`|Extract+optimize+remux files. Trust me, there **are** ways to optimize a TAR (without optimizing embedded files themselves). ***Umask + owner/group are not preserved.***|N/A
 ---
 Work in progress (already supported, but improvements can be done):
 []() | []() | []()
 :---:|:---:|---
-`.jpg`|`ect`|Uses [ECT](https://github.com/fhanau/Efficient-Compression-Tool), remove/*keep* metadata. I didn't test any other software for now.
 `.pdf`|`mupdf‑tools` `qpdf`|Garbage collect unused objects/streams + merge/reuse duplicates + compact cross ref table + recompress Flate streams. No extraction for now (for both images and attached files). cpdf & pdfsizeopt needs more test, and I'm willing to extract Deflate objects to compress them with `ect` (in the TODO list).
 `.png` `.apng`|`ect` `apngopt`|Use [ECT](https://github.com/fhanau/Efficient-Compression-Tool) for PNG and [apngopt](https://apng.sourceforge.io/) for Animated PNG, remove/keep metadata, *normal*/insane encoding time. Only apng needs more testing. 
 `.zip` `.zipx`| `ect` `zopfli_mrkrzych00` `7zz` |Segmented archives not supported. Only Deflate ZIP are supported for now. *Normal*/insane encoding time.
