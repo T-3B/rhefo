@@ -1,6 +1,6 @@
 # RHEFO ![GitHub release (latest by date)](https://img.shields.io/github/v/release/T-3B/rhefo) ![GitHub all releases](https://img.shields.io/github/downloads/T-3B/rhefo/total) ![Static Badge](https://img.shields.io/badge/license-SSPL-blue) [![Static Badge](https://img.shields.io/badge/Support_me!-f5af05?logo=PayPal)](https://www.paypal.com/donate/?hosted_button_id=GK4MGMCVRUYZQ)
 Really High Efficient File Optimizer (RHEFO) will **losslessly** recompress files as much as possible, according to their mime-types.
-This program favors *compression ratio* over speed.
+This program favors *compression ratio* over speed by maximizing CPU usage (can be restricted).
 
 
 ## What is this?
@@ -10,7 +10,7 @@ There exist already a few of them: [nikkhokkho's FileOptimizer](https://nikkhokk
 But they are Windows programs, and can be beaten quite easily (in term of compression ratio).\
 Also, their code must be compiled and therefore is more difficult to modify and test.
 
-The goal of RHEFO is not only to provide an easy way to optimize several file types, but also to allow the user to achieve maximum compression.\
+The goal of RHEFO is not only to provide an easy way to optimize several file types in parallel, but also to allow the user to achieve maximum compression.\
 Some max compression settings need quite a lot of time, thus need a flag to be set (see the output of `rhefo -h`).\
 This script intends to be "easily" editable, and **completely losslessly** (some options allow *lossy* operations on **metadata only**).\
 Please remember that this tool is under active development, and please read the table below in [supported file types](#supported-file-types) to check for possible unsupported stuffs (like metadata).\
@@ -27,7 +27,7 @@ Then simply download a release with your system architecture.\
 In the releases (**only there**) the add-ins are embedded in the script (which is self-extractable), so you only need *one* file.
 
 ## Usage & examples
-This script will optimize any folder/file inputs given, with the possibility to write outputs to another directory (or optimize inplace).\
+This script will optimize any folder/file inputs given in parallel, with the possibility to write outputs to another directory (or optimize inplace).\
 This script **completely supports exotic filenames**! For example, filenames can have `*`, start with a dash `-`, have a newline char `\n` or any non-printable chars.\
 Symlinks were *not* tested (even embedded in archives), and could break your machine (well I don't think so, but you've been warned).
 
@@ -55,14 +55,14 @@ File type specific dependencies (see the [table below](#supported-file-types)): 
 
 ## Add-ins
 This script also rely on several add-ins. Since they are not distributed (through package managers), I compile them myself (when needed) and host them here.\
-I provide only x86-64 and aarch64, in different branches (TODO). They are all compressed using `upx -9 --ultra-brute` (see [UPX](https://github.com/upx/upx)), compiled with optimizations: `-O3 -flto`, **static**, and generic.\
+I provide only x86-64 and aarch64, see [here](addins/README.md) for more info.
 I'm open to suggestions (as always!), and can try building them for Windows if someone manages to make this BASH script work on Windows.\
 [apngopt](https://apng.sourceforge.io/) [ECT](https://github.com/fhanau/Efficient-Compression-Tool) [MozJPEG](https://github.com/mozilla/mozjpeg) [MP3Packer](https://hydrogenaud.io/index.php/topic,32379.0.html)
 
 ## Supported file types
 
-For each file type, I test many and many softwares, and only keep the one(s) providing the smallest output files.\
-In many case different programs are used one after the other, allowing for the best compression.\
+For each file type, I try many softwares and settings, and only keep the one(s) providing the smallest output files.\
+In many cases, different programs are used one after the other, to achieve the best possible compression.\
 If you want to know which softwares I tested or more explanations, read the script comments.\
 In the "Behaviour" column, texts in italics are the default behaviour.\
 For easier reading, only the file extensions are listed, even if the script is using their mime-types.\
@@ -73,7 +73,7 @@ Extension|Dependencies|Behaviour|*Default*/insane&nbsp;speed
 :---:|:---:|---|:---:
 `.flac`|`flac`|Uses [reference FLAC encoder](https://github.com/xiph/flac), extract+optimize+remux embedded pictures, (*non*-)subset file, remove/*keep* seek-table, remove/*keep* vendor string, *remove* metadata padding, remove/*keep* metadata, *normal*/insane encoding time.|N/A
 `.gz` `.tgz` `.svgz`|`gzip` `ect`|Uses [ECT](https://github.com/fhanau/Efficient-Compression-Tool), extract+optimize+remux, remove/*keep* original filename, *normal*/insane encoding time.|N/A
-`.jpg`|`mozjpeg`|Uses [MozJPEG](https://github.com/mozilla/mozjpeg), remove/*keep* metadata.
+`.jpg`|`mozjpeg`|Uses [MozJPEG](https://github.com/mozilla/mozjpeg), remove/*keep* metadata (EXIF, ...).
 `.mp3`|`mp3packer`|Uses [MP3Packer](https://hydrogenaud.io/index.php/topic,32379.0.html), extract+optimize+remux embedded media files, delete/*write* Xing frame, *remove*/keep metadata padding, remove/*keep* metadata.|N/A
 `.tar` `.cbt`|`tar`|Extract+optimize+remux files. Trust me, there **are** ways to optimize a TAR (without optimizing embedded files themselves). ***Umask + owner/group are not preserved.***|N/A
 ---
@@ -82,7 +82,7 @@ Work in progress (already supported, but improvements can be done):
 :---:|:---:|---
 `.pdf`|`mupdf‑tools` `qpdf`|Garbage collect unused objects/streams + merge/reuse duplicates + compact cross ref table + recompress Flate streams. No extraction for now (for both images and attached files). cpdf & pdfsizeopt needs more test, and I'm willing to extract Deflate objects to compress them with `ect` (in the TODO list).
 `.png` `.apng`|`ect` `apngopt`|Use [ECT](https://github.com/fhanau/Efficient-Compression-Tool) for PNG and [apngopt](https://apng.sourceforge.io/) for Animated PNG, remove/keep metadata, *normal*/insane encoding time. Only apng needs more testing. 
-`.zip` `.zipx`| `ect` `zopfli_mrkrzych00` `7zz` |Segmented archives not supported. Only Deflate ZIP are supported for now. *Normal*/insane encoding time.
+`.zip` `.zipx`| `ect` `zip` `7zz` |Segmented archives not supported. Only Deflate ZIP are supported for now. *Normal*/insane encoding time.
 
 
 ## License

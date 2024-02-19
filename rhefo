@@ -344,13 +344,12 @@ compressFile() {	# warning: $1 can be empty
 			compressTmpFolder "$v"
 			if [[ -v zipnodeflate || -v p ]]
 			then : # TODO
-			# TODO remove zopfli_mrkrzych00 since it's really slow; replace it by writing a script forcing compression mode even if output is larger than input
-			# TODO use zip instead of zopfli: appears to always use Deflate if using `-9`. This is fast and mem efficient since we create an archive for each file and inputs are removed (zip with many files is linear):  parallel zip -m -9 {}.zip {} ::: * && parallel zip {} --out test.zip ::: *.zip
-			else (cd "$v"/..; zopfli_mrkrzych00 --i1 --v0 --zip --dir "${v##*/}"  # `zip`, `7z` will both use 'Stored' if Deflate is larger, but not zopfli_mrkrzych00 - really usefull since ECT is the best Deflate compressor but only recompress Deflate streams (not 'Stored') and needs a zip as input
-					cd "${v##*/}"; find -empty -printf %P\\0 | xargs -r0 7z a ../"${v##*/}".zip)  # zopfli won't store dirs as separate stream in zip. WARNING zopfli drop empty dirs and files!
-				rm -r "$v"
-				mv "$v".zip "$tmp"
-				ect -9${zipinsane+9999} -quiet -zip --strict --mt-deflate "$tmp"  # using --strict makes sure ECT does not try to optimize archived files (so it will only optimize Deflate compression in ZIP, not files themselves)
+			else  # even if `zip -9` only uses 100% cpu, compressed 2.2GB with 660 files in 67 seconds (fast enough). Could take less (but more mem) time by compressing each file in its own zip, ect all of them in parallel (because ect takes each file in the archive one after the other), then merge them (using zipmerge from libzip)
+				cd "$v"
+				find . -type d -empty -print0 | xargs -r0 zip -q "$tmp"
+				zip -9rDq "$tmp" .  # -9 because forces everything > ~64 bytes to be compressed with Deflate (even if output is bigger) - useful as ect will NOT compress uncompressed files (and if Deflate stream is bigger than input data, ect will store the file uncompressed)
+				cd - >/dev/null
+				ect -9${zipinsane+9999} -quiet -zip --strict --mt-deflate "$tmp"  # using --strict makes sure ECT does not try to optimize archived files (so it will only optimize Deflate compression in ZIP, not embedded files themselves)
 			fi
 			# TODO for apk, do not extract to optimize inside (would require apk-resigner - AUR; + zipalign; + some uncompressed files should stay uncompressed https://stackoverflow.com/q/25425172/13227011)
 
