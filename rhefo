@@ -33,7 +33,8 @@
 # => add a setting "globmaxmem" to limit the maximum memory used at the same time in the TMPDIR folder (parallel has some parameter to suspend jobs if not enough mem - search for "mem" in man page)
 
 # TODO add --glob-nosort to not sort input by size (if input is given with something like find)
-# TODO change zip-nodeflate to zip-broken (so use also flac-broken); *-broken == better comp but (far) less compatibility/support
+# TODO change zip-nodeflate to zip-broken (so use also flac-broken for flaccid); *-broken == better comp but (far) less compatibility/support
+# TODO use jpg-broken for jpegtran -arithmetic
 
 set -a  # export var+fct automatically
 set -m  # All processes run in a separate process group (needed for Ctrl+C "trick")
@@ -249,7 +250,7 @@ ffCompressStreams() {
 		return 1
 	fi
 	cd "${1%/*}"  # trick in order to use IFS=/ as a separator since that char is not allowed in filenames
-	while read -r c;
+	while read -r c
 	do f+="-map/0:$i/-c/copy/$name.$((i++)).$c/"  # TODO see if we can inline that with the ffmpeg command; at least I'm sure with can inline with ffprobe
 	done < <(ffprobe -v warning -show_entries stream=codec_name -of default=nk=1:nw=1 "$1")  # `-of csv=p=0` doesn't work if stream has SIDE_DATA (it would have a trailing ',')
 	ffmpeg -v warning -i "$1" $f
@@ -330,7 +331,7 @@ compressFile() {	# warning: $1 can be empty
 		application/zip | application/zip-compressed | application/x-zip-compressed)
 			# TODOOOOOOOOOOOO WARNING some uncompressed files need to stay uncompressed (like mimetype in epub - epub is a "disguised" ZIP). Use extension to differentiate EPUB from ZIP
 			# TODO check application/epub+zip, application/vnd.comicbook+zip, application/x-zip-compressed-fb2,
-			# TODO for 7z there are plug-ins : https://github.com/mcmilk/7-Zip-zstd (zstd, Brotli, LZ4, LZ5, Lizard, Fast LZMA2)
+			# TODO for 7z there are plug-ins : https://www.tc4shell.com/en/7zip/ (zstd, Brotli, LZ4, LZ5, Lizard, Fast LZMA2 and many more)
 			# TODO  EPUBs, which require that the first entry in the ZIP be the mimetype file
 			#  TODO for android APK: "aur/apk-resigner 1-2 (+8 0.00)		A bash script utility that resigns the Android Package (APK) files (Android applications) with different certificates."
 			# search "apk" or "android" with yay, because many utils exist to edit apk
@@ -411,9 +412,23 @@ compressFile() {	# warning: $1 can be empty
 			fi
 			# use mp3packer to add Xing frame (with real duration) of 208 bytes (ffmpeg Xing frame is 522), could be even smaller than 208 bytes if I create it myself (since strings "mp3packer" or "Lavf" are written to Xing)
 			[ -v mp3lossy ] || mp3packer -u "$tmp" "$tmp2" >/dev/null;;
-		image/jpeg)  # DONE
-			# for some strange reason ect adds overhead; if globstrip is set then only drop comments (Exif, ...)
-			jpegtran -copy ${globstrip-all}${globstrip+icc} "$in" >"$tmp";;
+		image/gif)
+			# gifski cannot recompress losslessly
+			# TODO see gifsicle and compare to imageMagick (mogrify)
+			# suggested idea from FlexiGIF author: run first an optimizer for palette and other stuffs (gifsicle/imageMagick) *THEN* FlexiGIF as it only changes the LZW stream
+			# gifsicle -o 1"$i" -O3 --no-comments --no-extensions --no-app-extensions --no-names input.gif  # check -j for multi-threading too
+			;;
+		image/jpeg)
+			# tested ECT, jpegoptim and jpegtran; JPG optimize benchmark: https://encode.su/threads/3987-Jpeg-Optimizer-testing
+			
+			# TODO for Exif editing: if $globstrip, remove everything except these to be completely lossless:
+			# - ColorSpace, InteropIndex, ICC_Profile, Orientation; maybe others ? See https://exiftool.org/TagNames/EXIF.html
+			# Try to `jpegtran -rotate x -perfect -outfile out.jpg in.jpg` with rotation written in Exif (WARNING may also be mirrored), will exit with $?=1 if not lossless transformation
+			# TODO add -arithmetic coding with $jpgbroken
+			
+			# TODOOOOOOOOOOOOOOOOO copy icc will drop the rotation of the image!!!!!!!!!!!!!!!!!!!!!!
+			# TODO in average, ect -progressive gives smaller files than jpegtran (use `-9` because presets >= 5 have different behavior than smaller ones)
+			jpegtran -copy ${globstrip-all}${globstrip+icc} -outfile "$tmp" "$in";;
 		image/jxl)
 			# -e 10 needs libjxl 0.8.0
 			# cjxl -e 9 -d 0 --brotli_effort=11 --num_threads=0 -I 100 -g 3 -E 11
