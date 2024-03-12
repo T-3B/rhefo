@@ -67,7 +67,8 @@ If you want to know which softwares I tested or more explanations, read the scri
 In the "Behaviour" column, texts in italics are the default behaviour.\
 For easier reading, only the file extensions are listed, even if the script is using their mime-types.\
 Fully supported file types:
-// TODO remove normal/insane from "behaviour" description and add speed.
+
+[//]: # (TODO, remove normal/insane from "behaviour" description and add global speed - instant/normal/insane)
 
 Extension|Dependencies|Behaviour|*Default*/insane&nbsp;speed
 :---:|:---:|---|:---:
@@ -76,6 +77,7 @@ Extension|Dependencies|Behaviour|*Default*/insane&nbsp;speed
 `.jpg`|`mozjpeg`|Uses [MozJPEG](https://github.com/mozilla/mozjpeg), remove/*keep* metadata (EXIF, ...).
 `.mp3`|`mp3packer`|Uses [MP3Packer](https://hydrogenaud.io/index.php/topic,32379.0.html), extract+optimize+remux embedded media files, delete/*write* Xing frame, *remove*/keep metadata padding, remove/*keep* metadata.|N/A
 `.tar` `.cbt`|`tar`|Extract+optimize+remux files. Trust me, there **are** ways to optimize a TAR (without optimizing embedded files themselves). ***Umask + owner/group are not preserved.***|N/A
+`.Z`|`flexiGIF`|Uses [flexiGIF](https://encode.su/threads/3008-flexiGIF-lossless-GIF-LZW-optimization?p=82323&viewfull=1#post82323), extract+optimize+remux, *normal*/insane encoding time.|N/A
 ---
 Work in progress (already supported, but improvements can be done):
 []() | []() | []()

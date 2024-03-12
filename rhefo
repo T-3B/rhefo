@@ -21,6 +21,8 @@
 # formats (mime-types) which are completely finished and supported are marked 'DONE'
 
 
+# TODO depending on whether we have lots of input files or not, run single-threaded jobs in parallel or a few jobs each taking multiple threads respectively (jpegultrascan -t x; ect --mt-deflate; ...). "input files < #threads" ?
+
 # TODO add globarchnoroot to remove root folder if there is only one folder
 # TODO add option to remove __MACOSX folder from inside archives add to globarch-lossy
 
@@ -38,7 +40,7 @@
 
 set -a  # export var+fct automatically
 set -m  # All processes run in a separate process group (needed for Ctrl+C "trick")
-version=v0.0.1
+version=0.0.1
 help=$(echo 'Really High Efficient File Optimizer (RHEFO), version '$version'. Under SSPL.
 For updates, supported files, dependencies, issues, license and many more, see:
   https://github.com/T-3B/rhefo
@@ -320,6 +322,10 @@ compressFile() {	# warning: $1 can be empty
 		application/octet-stream)  # can be many many things
 			# TODO
 			;;
+		application/x-compress)
+			flexiGIF -q --decompress "$in" "$tmp2"
+			compressFile "$tmp2"
+			flexiGIF -p -a=256 --compress "$tmp2" "$tmp";;  # TODO insane: remove -a=256
 		application/x-tar | application/x-cbt)  # TODO use binsort
 			# some metadata infos are not guarenteed to be kept (owner, permissions, atime/mtime)
 			v=$(mktemp -d)
