@@ -21,6 +21,8 @@
 # formats (mime-types) which are completely finished and supported are marked 'DONE'
 
 
+# TODO allow to stop and resume; using parallel --jl parallel.log --resume AND/OR criu (note that criu doesn't work on all kernels - and apparently needs setsid); take into account big ZIP optimization (many recursive calls of compressFile)
+
 # TODO depending on whether we have lots of input files or not, run single-threaded jobs in parallel or a few jobs each taking multiple threads respectively (jpegultrascan -t x; ect --mt-deflate; ...). "input files < #threads" ?
 
 # TODO add globarchnoroot to remove root folder if there is only one folder
@@ -37,6 +39,14 @@
 # TODO add --glob-nosort to not sort input by size (if input is given with something like find)
 # TODO change zip-nodeflate to zip-broken (so use also flac-broken for flaccid); *-broken == better comp but (far) less compatibility/support
 # TODO use jpg-broken for jpegtran -arithmetic
+
+# TODO for the file tree struct in the glob-output, what about same as rsyn ?
+# rsync source destination/   (copy folder `source` in destination - one more depth)
+# rsync source/ destination/   (copy content of folder `source` - not itself)
+
+
+# TODO what about how lossy and strip works ?
+# do something like --<postfix>-strip where <postfix> is the last part of the filename
 
 set -a  # export var+fct automatically
 set -m  # All processes run in a separate process group (needed for Ctrl+C "trick")
@@ -62,6 +72,7 @@ List of options (global ones first, then grouped by file type):
   compatibility-break and lossy flags are NOT set; TAKES A LOT OF TIME!!!
 --glob-jobs=<N> | -j<N>
   <N> files are optimized in parallel; default: same as --glob-threads
+  more jobs mean more RAM usage, no impact on output filesize
 --glob-keeptime | -k
   if set, input access and modification times are kept
 --glob-lossy | -l	better compression, lossy
@@ -79,6 +90,7 @@ List of options (global ones first, then grouped by file type):
   if set, strip/remove ALL metadata/exif; see the less aggressive --glob-lossy
 --glob-threads=<N> | -t<N>
   <N> logic cpu processors used by this script; default: all (see --glob-jobs)
+  more threads mean more RAM usage, no impact on output filesize
 --glob-tmp=<path> <path>
   <path> is a directory intensively used for r/w; default is `/dev/shm`
   if does not exist, or cannot r/w in it, defaults to `/tmp`
@@ -419,22 +431,26 @@ compressFile() {	# warning: $1 can be empty
 			# use mp3packer to add Xing frame (with real duration) of 208 bytes (ffmpeg Xing frame is 522), could be even smaller than 208 bytes if I create it myself (since strings "mp3packer" or "Lavf" are written to Xing)
 			[ -v mp3lossy ] || mp3packer -u "$tmp" "$tmp2" >/dev/null;;
 		image/gif)
-			# gifski cannot recompress losslessly
-			# TODO see gifsicle and compare to imageMagick (mogrify)
-			# suggested idea from FlexiGIF author: run first an optimizer for palette and other stuffs (gifsicle/imageMagick) *THEN* FlexiGIF as it only changes the LZW stream
-			# gifsicle -o 1"$i" -O3 --no-comments --no-extensions --no-app-extensions --no-names input.gif  # check -j for multi-threading too
+			# gifski and ImageMagick (-quality 100 -layers optimize) cannot recompress losslessly
+			# gifsicle and flexiGIF both can produce bigger output than input, only gifsicle *then* flexiGIF seems useful
+			# TODO gifsicle
+			# gifsicle -o 1"$i" -O3 --no-comments --no-extensions --no-app-extensions --no-names input.gif
 			;;
 		image/jpeg)
-			# tested ECT, jpegoptim and jpegtran; JPG optimize benchmark: https://encode.su/threads/3987-Jpeg-Optimizer-testing
+			# tested ECT, jpegoptim, jpegtran, jpegultrascan.pl; JPG optimize benchmark: https://encode.su/threads/3987-Jpeg-Optimizer-testing
 			
 			# TODO for Exif editing: if $globstrip, remove everything except these to be completely lossless:
 			# - ColorSpace, InteropIndex, ICC_Profile, Orientation; maybe others ? See https://exiftool.org/TagNames/EXIF.html
-			# Try to `jpegtran -rotate x -perfect -outfile out.jpg in.jpg` with rotation written in Exif (WARNING may also be mirrored), will exit with $?=1 if not lossless transformation
+			# Try to `jpegtran -rotate x -perfect -outfile out.jpg in.jpg` with rotation written in Exif (WARNING may also be mirrored), will exit with $?=1 if not lossless transformation  (CHECK ALSO `ect -autorotate`)
 			# TODO add -arithmetic coding with $jpgbroken
+			# TODO jpegultrascan: always use -i (sometimes smaller output, but never bigger); maybe try -o 'jpegtran -revert' to know if the errors I got with recompressing wallpapers (too many scans) are solved with that (try also for other files)
+			# -b13 seems only useful for big files, no output size diff for < 1MB
 			
 			# TODOOOOOOOOOOOOOOOOO copy icc will drop the rotation of the image!!!!!!!!!!!!!!!!!!!!!!
 			# TODO in average, ect -progressive gives smaller files than jpegtran (use `-9` because presets >= 5 have different behavior than smaller ones)
-			jpegtran -copy ${globstrip-all}${globstrip+icc} -outfile "$tmp" "$in";;
+			
+			# TODO `jhead -du` Or -purejpg which is a combination of params including -du; this command allowed Fox Wizard to beat me again (6 bytes smaller - metadata - than `ultrascan -b 13 -t 16 -a -i -s` !arithmetic!, ECT nor jpegtran could remove these 6 bytes)
+			jpegtran -copy all -outfile "$tmp" "$in" && ect -9 -progressive -quiet "$tmp";;
 		image/jxl)
 			# -e 10 needs libjxl 0.8.0
 			# cjxl -e 9 -d 0 --brotli_effort=11 --num_threads=0 -I 100 -g 3 -E 11
@@ -446,6 +462,15 @@ compressFile() {	# warning: $1 can be empty
 			# code stripping container : https://github.com/Fraetor/jxl_decode/blob/main/src/jxl-strip.py
 			
 			# jxlinfo prints 'JPEG bitstream reconstruction data available', perhaps with glob-lossy remove that reconstruction (if does not degrade JXL quality - I guess it only change jpg reconstruction)
+			
+			#upscaled pixel art is very hard to beat.
+			#You resize the art back down to 1:1 pixels, then with lossless you add
+			#--already_downsampled --resampling=(2, 4 or 8, whichever is closest to the original) --upsampling_mode=0
+			
+			# JXL max effort is now 11 with allow_expert_options, 10 otherwise
+
+			# For JPG lossless recompression, JXL does not *ALWAYS* output smaller file if input JPG is smaller (to "inflate" the JPG file, use `jpegtran -revert`
+
 			;;
 		image/png | image/x-png | image/vnd.mozilla.apng)
 			# Tested software: ECT, zopflipng_mrkrzych00; zopflipng_mrkrzych00 -y -m --iterations=999 --slowfix --all --lossy_transparent --alpha_cleaners=bhvapw --pass=999 in out
@@ -457,9 +482,11 @@ compressFile() {	# warning: $1 can be empty
 				apngopt -z2 -i99${pnginsane+999} "$in" "$tmp" >/dev/null  # TODO to do better, we could split frames, use ECT --reuse, them remux
 			else mv "$tmp" "$tmp.png"
 				ect -9${pnginsane+9999} --mt-deflate -quiet ${globstrip+-strip} "$tmp.png"  # ect needs correct extension
+				# TODO tests, because -90059 is faster than -9999
 				mv "$tmp.png" "$tmp"
 			fi;;
 		image/webp)  # only tested cwebp; cwebp -z9 is NOT always the smallest one! Therefore just bruteforce -z (which is an alias for -m and -q options)
+			# TODO do not do this for lossy images (test with webpinfo)
 			parallel cwebp -quiet -lossless -alpha_filter best -metadata all -z {} "$tmp" -o "$tmp".{} ::: {0..9}
 			catchSmallestFile "$tmp".*;;
 		*)
@@ -500,7 +527,7 @@ ctrlCHandler() {
 }
 
 # Set up the Ctrl+C signal handler
-trap 'ctrlCHandler' INT  # TODO allow to stop and resume the optimisation (for example with the tool idk the name that can do it only if certain param was set during the kernel compilation; or by simply storing which files were processed but this wouldn't work for big ZIP optimisation)
+trap 'ctrlCHandler' INT
 
 (($#)) && parseArgs "$@" || parseArgs -h
 
