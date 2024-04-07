@@ -223,7 +223,7 @@ parseArgs() {  # not using `local` vars because this fct is only exectued once
 
 # restrict this script to use the $1 *least used* CPU processors
 threadlimit() {
-    # sum idle ($4) and io-wait ($5) ticks, substract between 2 reads (5 sec between), take $1 biggest numbers (will be our cpu threads to use with taskset)
+	# sum idle ($4) and io-wait ($5) ticks, substract between 2 reads (5 sec between), take $1 biggest numbers (will be our cpu threads to use with taskset)
 	# could have used `taskset -acp 0-$(($1-1)) $$`, but doesn't "work" if > 1 instance of RHEFO is running
 	[ $(nproc) = $(nproc --all) ] || { warning 'This script does NOT have access to all cpu threads, ignoring --glob-threads.'; return;}
 
@@ -368,6 +368,7 @@ compressFile() {	# warning: $1 can be empty
 				find . -type d -empty -print0 | xargs -r0 zip -q "$tmp"
 				zip -9rDq "$tmp" .  # -9 because forces everything > ~64 bytes to be compressed with Deflate (even if output is bigger) - useful as ect will NOT compress uncompressed files (and if Deflate stream is bigger than input data, ect will store the file uncompressed)
 				cd - >/dev/null
+				rm -r "$v"
 				ect -9${zipinsane+9999} -quiet -zip --strict --mt-deflate "$tmp"  # using --strict makes sure ECT does not try to optimize archived files (so it will only optimize Deflate compression in ZIP, not embedded files themselves)
 			fi
 			# TODO for apk, do not extract to optimize inside (would require apk-resigner - AUR; + zipalign; + some uncompressed files should stay uncompressed https://stackoverflow.com/q/25425172/13227011)
@@ -498,7 +499,7 @@ compressFile() {	# warning: $1 can be empty
 	rm -f "$tmp2"
 	[ -v globkeeptime ] && touch -md"$mtime" "$tmp" && touch -ad"$atime" "$tmp"
 	if [ $3 ]
-	then sem --id "$globstatsfile" 'set -- $(<"$globstatsfile"); printf "$(('$size'+$1))\n$(('$3'+$2))\n$((1+$3))\n" >"$globstatsfile"'  # use a semaphore to allow only one thread to write stats at a time
+	then sem --fg --id "$globstatsfile" 'set -- $(<"$globstatsfile"); printf "$(('$size'+$1))\n$(('$3'+$2))\n$((1+$3))\n" >"$globstatsfile"'  # use a semaphore to allow only one thread to write stats at a time
 		[[ -v globoutput && ! -v globupdate && -e "$out" ]] && { warning "'$out' already exists, not updated. Compressed version here: '$tmp'.\nRerun with -y to overwrite files in output directory, or with -p to add a prefix.";} || { mv "$tmp" "$out"; chown -f --reference="$in" "$out"; chmod -f --reference="$in" "$out";}
 	else mv "$tmp" "$out"
 	fi
