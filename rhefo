@@ -44,9 +44,13 @@
 # rsync source destination/   (copy folder `source` in destination - one more depth)
 # rsync source/ destination/   (copy content of folder `source` - not itself)
 
+# TODO do not use /dev/shm but always /tmp ? If it's RAM (always ? idk)
+# and TODO use a folder INSIDE the tmpfolder, so for future implementations it can be reused easily
+
+# TODO allow mask to be mimetype if contains a '/' (like 'image/*')
 
 # TODO what about how lossy and strip works ?
-# do something like --<postfix>-strip where <postfix> is the last part of the filename
+# do something like --<postfix>-strip where <postfix> is the last part of the filename (perhaps better if prefix of mimetype)
 
 set -a  # export var+fct automatically
 set -m  # All processes run in a separate process group (needed for Ctrl+C "trick")
