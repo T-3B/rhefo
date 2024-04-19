@@ -1,5 +1,12 @@
-# RHEFO ![GitHub release (latest by date)](https://img.shields.io/github/v/release/T-3B/rhefo) ![GitHub all releases](https://img.shields.io/github/downloads/T-3B/rhefo/total) ![Static Badge](https://img.shields.io/badge/license-SSPL-blue) [![Static Badge](https://img.shields.io/badge/Support_me!-f5af05?logo=PayPal)](https://www.paypal.com/donate/?hosted_button_id=GK4MGMCVRUYZQ)
-Really High Efficient File Optimizer (RHEFO) will **losslessly** recompress files as much as possible, according to their mime-types.
+<h1 align="center">
+  <img src="https://img.shields.io/github/downloads/T-3B/rhefo/total" />
+  <img src="https://img.shields.io/badge/license-SSPL-blue" />
+  &nbsp;&nbsp;RHEFO&nbsp;&nbsp;
+  <a href="https://www.paypal.com/donate/?hosted_button_id=GK4MGMCVRUYZQ"> <img src="https://img.shields.io/badge/Support_me!-f5af05?logo=PayPal" /> </a>
+  <img src="https://img.shields.io/github/v/release/T-3B/rhefo" />
+</h1>
+
+Really High Efficient File Optimizer (RHEFO) will **losslessly** recompress files as much as possible, according to their mime-types.\
 This program favors *compression ratio* over speed by maximizing CPU usage (can be restricted).
 
 
