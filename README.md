@@ -6,9 +6,14 @@
   <img src="https://img.shields.io/github/v/release/T-3B/rhefo" />
 </h1>
 
-Really High Efficient File Optimizer (RHEFO) will **losslessly** recompress files as much as possible, according to their mime-types.\
-This program favors *compression ratio* over speed by maximizing CPU usage (can be restricted).
-
+<p align="center">
+  Really High Efficient File Optimizer (RHEFO) will <b>losslessly</b> recompress files as much as possible, according to their mime-types.<br />
+  This program favors <i>compression ratio</i> over speed by maximizing CPU usage (can be restricted).
+</p>
+<h3 align="center">
+  Visits to this page since April 19, 2024<br />
+  <img src="https://count.getloli.com/get/@T-3B_RHEFO?theme=rule34" alt="T-3B_RHEFO" />
+</h3>
 
 ## What is this?
 This tool is a file optimizer, thus it will recompress given files as much as possible while keeping the file type.\
