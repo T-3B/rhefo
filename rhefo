@@ -297,7 +297,6 @@ compressFile() {	# warning: $1 can be empty
 	local atime mtime size mime in=$2${1:+/$1} tmp tmpname tmp2 out
 	atime=$(stat -c%x "$in")
 	mtime=$(stat -c%y "$in")
-	tmpfolder=
 	cd "$(mktemp --tmpdir -d rhefo_${version}_XXX)"  # keep every compressFile isolated from other threads, allows us to use "$tmp" with an additional filextension, or with one less, without worry
 	tmp=$(mktemp -p"$PWD" --suff=."${in##*/}" XXX)  # always use tmp, so in!=tmp
 	#TODO check if $TMPDIR has enough free mem
@@ -506,6 +505,7 @@ compressFile() {	# warning: $1 can be empty
 		[[ -v globoutput && ! -v globupdate && -e "$out" ]] && { warning "'$out' already exists, not updated. Compressed version here: '$tmp'.\nRerun with -y to overwrite files in output directory, or with -p to add a prefix.";} || { mv "$tmp" "$out"; chown -f --reference="$in" "$out"; chmod -f --reference="$in" "$out";}
 	else mv "$tmp" "$out"
 	fi
+	rm -r "${tmp%/*}"
 }
 
 # only one argument, the folder where we extracted the archive contents
