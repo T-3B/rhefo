@@ -23,7 +23,7 @@
 
 # TODO allow to stop and resume; using parallel --jl parallel.log --resume AND/OR criu (note that criu doesn't work on all kernels - and apparently needs setsid); take into account big ZIP optimization (many recursive calls of compressFile)
 
-# TODO depending on whether we have lots of input files or not, run single-threaded jobs in parallel or a few jobs each taking multiple threads respectively (jpegultrascan -t x; ect --mt-deflate; ...). "input files < #threads" ?
+# TODO depending on whether we have lots of input files or not, run single-threaded jobs in parallel or a few jobs each taking multiple threads respectively (jpegultrascan -t x; ...). "input files < #threads" ?
 
 # TODO add globarchnoroot to remove root folder if there is only one folder
 # TODO add option to remove __MACOSX folder from inside archives add to globarch-lossy
@@ -505,6 +505,7 @@ compressFile() {	# warning: $1 can be empty
 		[[ -v globoutput && ! -v globupdate && -e "$out" ]] && { warning "'$out' already exists, not updated. Compressed version here: '$tmp'.\nRerun with -y to overwrite files in output directory, or with -p to add a prefix.";} || { mv "$tmp" "$out"; chown -f --reference="$in" "$out"; chmod -f --reference="$in" "$out";}
 	else mv "$tmp" "$out"
 	fi
+	cd "${tmp%/*}"/..
 	rm -r "${tmp%/*}"
 }
 
