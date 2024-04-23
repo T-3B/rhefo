@@ -297,7 +297,9 @@ compressFile() {	# warning: $1 can be empty
 	local atime mtime size mime in=$2${1:+/$1} tmp tmpname tmp2 out
 	atime=$(stat -c%x "$in")
 	mtime=$(stat -c%y "$in")
-	tmp=$(mktemp --tmpdir --suff=."${in##*/}" XXX)  # always use $tmp, even if recompressing the files that were inside an archive, to be safe with wildcards "$tmp".* (when bruteforcing compression args) - also added a dot (safe to drop the extension for some compression formats like GZ)
+	tmpfolder=
+	cd "$(mktemp --tmpdir -d rhefo_${version}_XXX)"  # keep every compressFile isolated from other threads, allows us to use "$tmp" with an additional filextension, or with one less, without worry
+	tmp=$(mktemp -p"$PWD" --suff=."${in##*/}" XXX)  # always use tmp, so in!=tmp
 	#TODO check if $TMPDIR has enough free mem
 	out=$in
 	[[ $3 && -v globoutput ]] && out=$globoutput/${2##*/}${1:+/$1}
@@ -312,17 +314,14 @@ compressFile() {	# warning: $1 can be empty
 	case $(file -b --mime-type "$tmp") in  # see here for known MIME types: /usr/share/mime/types
 		application/gzip | application/x-gzip)	# DONE
 			# tested tools: zopfli, zopfli MrKrzYch00's mod, gzip, 7z, minigzip (from minizip-ng). Tested on all files from silesia.tar (ect is far faster than zopfli(mod), and always gives smaller files - even when file is 1KB; ECT << zopfli < zopfli_mrkrzych00 << gzip); zopfli_mrkrzych00 --i9999 --mui999 --slowfix --t0 --pass9 --all androidsdk.svg
-			p=$(gzip -Nl "$tmp")
-			p=${p##* }  # p= original decomp filename
+			p=$(gzip -Nl "$in")
+			p=${p##*/}  # p= original decomp filename
 			tmp2=${tmp2%.*}  # TODO remove any extension, or only if extension is GZ (case *in*sensitive) ?
-			gzip -dc "$tmp" >"$tmp2"
-			compressFile "$tmp2"
-			cd "$(mktemp -d)"
-			mv "$tmp" "$p"  # TODO not safe at all, and use tmp2 (not tmp)
-			gzip -1c$([[ -v gziplossy || "$p.gz" = "$tmpname" ]] && echo n) "$p" >"$tmp"
-			cd - >/dev/null
-			rm -r "$OLDPWD"
-			ect -9${gzipinsane+9999} --mt-deflate -gzip --strict "$tmp";;  # using strict won't recompress embedded file
+			gzip -dc "$in" >"${tmp%.*}"
+			compressFile "${tmp%.*}"
+			gzip -1c$([[ -v gziplossy || "$p.gz" = "$tmpname" ]] && echo n) "${tmp%.*}" >"$tmp"
+			rm "${tmp%.*}"
+			ect -9${gzipinsane+9999} --mt-deflate -gzip --strict -quiet "$tmp";;  # using strict won't recompress embedded file
 		application/pdf)  # TODO there is also `mutool extract`;	for lossless recompression check, see `mutool draw` (converts pdf to vector graphics)
 			# TODO: best combination: cpdf -> pdfsizeopt -> mutool clean -> qpdf
 			# Warning I don't think it's always the same order giving smallest file
