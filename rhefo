@@ -510,7 +510,7 @@ compressFile() {	# warning: $1 can be empty
 
 # only one argument, the folder where we extracted the archive contents
 compressTmpFolder() {
-	[ -v globnorecur ] && find "$1" -type f -printf '%s\0%P\0%H\0' | perl -0ne 'push @rec, $_; if ($#rec == 2) { push @items, join("", @rec); @rec = (); } END { print(join("", sort { $b <=> $a } @items)) }' | parallel -0L3 --lb compressFile {2} {3} {1}
+	[ -v globnorecur ] || find "$1" -type f -printf '%s\0%P\0%H\0' | perl -0ne 'push @rec, $_; if ($#rec == 2) { push @items, join("", @rec); @rec = (); } END { print(join("", sort { $b <=> $a } @items)) }' | parallel -0L3 --lb compressFile {2} {3}
 }
 
 warning() { printf "\033[1;33mW: %s\033[0m\n" "$1" >&2;}
