@@ -68,6 +68,8 @@ INPUT can be folder or file, and several INPUTs can be given.
 List of options (global ones first, then grouped by file type):
 --help | -h
   print help; use `-h` for options summary, `--help` for full help message
+--extract-addins | -x
+  only extract add-ins embedded in this script to <path> then exit
 --glob-filemask=<mask> | -m <mask>
   only filenames matching the <mask> will be optimized (e.g. "*.mp3")
 --glob-insane | -9	better compression
@@ -95,7 +97,7 @@ List of options (global ones first, then grouped by file type):
 --glob-threads=<N> | -t<N>
   <N> logic cpu processors used by this script; default: all (see --glob-jobs)
   more threads mean more RAM usage, no impact on output filesize
---glob-tmp=<path> <path>
+--glob-tmp=<path>
   <path> is a directory intensively used for r/w; default is `/dev/shm`
   if does not exist, or cannot r/w in it, defaults to `/tmp`
 --glob-update | -y
@@ -160,7 +162,7 @@ find -name "*.flac" -type f -print0 | xargs -0 rhefo -o /outdir' |\
 parseArgs() {  # not using `local` vars because this fct is only exectued once
 	[ $(printf '\1' | od -dAn) = 1 ] || error 'This script was not tested on BIG ENDIAN devices. I mainly use `printf %x` with\nnumbers of up to 4 bytes.\nPLEASE, open an issue and if you have time HELP ME supporting this architecture\nby simply testing! This would really help a lot, since I only have little-endian\ndevices. Seriously, please.\n'
 	getopt -T && { error 'Your `getopt` is not compatible with this script. Open an issue.' 4;}
-	args=$(getopt -o h9j:klm:no:p:st:y -l help,glob-insane,glob-jobs:,glob-keeptime,glob-lossy,glob-filemask:,glob-noextract,glob-output:,glob-prefix:,glob-strip,glob-threads:,glob-tmp:,glob-update,flac-insane,flac-lossy,flac-subset,gzip-insane,gzip-lossy,mp3-lossy,png-insane,zip-insane -n rhefo -s bash -- "$@")
+	args=$(getopt -o hx:9j:klm:no:p:st:y -l help,extract-addins:,glob-insane,glob-jobs:,glob-keeptime,glob-lossy,glob-filemask:,glob-noextract,glob-output:,glob-prefix:,glob-strip,glob-threads:,glob-tmp:,glob-update,flac-insane,flac-lossy,flac-subset,gzip-insane,gzip-lossy,mp3-lossy,png-insane,zip-insane -n rhefo -s bash -- "$@")
 	(($?)) && error 'Could not parse args. See the help message `rhefo -h`.'
 	TMPDIR=/dev/shm  # mktemp uses directly TMPDIR, so set it instead of another variable globtmp (or we should specify this variable as an argument)
 	eval set -- "$args"
@@ -168,6 +170,7 @@ parseArgs() {  # not using `local` vars because this fct is only exectued once
 	do case "$1" in
 			-h)						echo "${help%%$'\n'*}"; echo "$help" | grep '\[;33m'; echo 'Run `rhefo --help` for the full help.'; exit;;
 			--help)					echo "$help"; exit;;
+			-x | --extract-addins)	[[ -d "$2" || -w "$2" ]] || error "Output directory '$2' does not exist or cannot write to it."; extractAddins "$2"; exit;;
 			-9 | --glob-insane)		flacinsane=;gzipinsane=;pnginsane=;zipinsane=;;
 			-j | --glob-jobs)		((0<$2)) || error "Wrong jobs int: '$2'."; globjobs=$2; shift;;
 			-k | --glob-keeptime)	globkeeptime=;;
@@ -199,12 +202,9 @@ parseArgs() {  # not using `local` vars because this fct is only exectued once
 
 	printf '0\n0\n0\n' >"${globstatsfile=$(mktemp --tmpdir rhefo_${version}_tmpXXX)}"  # file where stats are wrote - to allow edit in subshells since we use `parallel`; 1st line is saved bytes, 2nd is input files size, 3rd is nbr input files
 
-	# extract embedded add-ins
 	addinsDir=$(mktemp -dp/tmp rhefo_${version}_tmpXXX)  # use /tmp for temp dir because we don't want weird chars (like ':') since we add it to PATH
-	
-	exitPATH=$addinsDir:$PATH
-	dd status=none bs=4k iflag=fullblock iflag=skip_bytes skip=$((6+$(grep -bm1 '^#EOF#$' "$(realpath -- "$BASH_SOURCE")" | cut -f1 -d:))) <"$(realpath -- "$BASH_SOURCE")" | base64 -d | tar xC "$addinsDir"
-	chmod -R +x "$addinsDir"
+	PATH=$addinsDir:$PATH
+	extractAddins "$addinsDir"
 
 	# create all the dir-tree to output folder
 	[ -v globoutput ] && { for i do [ -d "$i" ] && ([ "${globoutput#$(realpath "$i")}" = "$globoutput" ] || error "The --glob-output folder can't be inside an input folder."; cd -- "$i"; find -type d -exec mkdir -p "$globoutput/$(basename "$(realpath "$i")")/{}" \;); done;}
@@ -224,6 +224,11 @@ parseArgs() {  # not using `local` vars because this fct is only exectued once
 	while ! wait; do :; done  # each Ctrl+C will kill `wait` (1st hit: no new job, 2nd: kill parallel)
 }
 
+# $1 = folder where to extract all the add-ins
+extractAddins() {
+	dd status=none bs=4k iflag=fullblock iflag=skip_bytes skip=$((6+$(grep -bm1 '^#EOF#$' "$(realpath -- "$BASH_SOURCE")" | cut -f1 -d:))) <"$(realpath -- "$BASH_SOURCE")" | base64 -d | tar xC "$1"
+	chmod -R +x "$1"
+}
 
 # restrict this script to use the $1 *least used* CPU processors
 threadlimit() {
@@ -234,7 +239,6 @@ threadlimit() {
 	taskset -acp $(paste <(awk '/^cpu[0-9]/{print $4+$5}' /proc/stat) <(sleep 5; awk '/^cpu[0-9]/{print $4+$5}' /proc/stat) \
 					| awk '{print $2-$1, NR-1}' | sort -n | tail -$1 | cut -d' ' -f2 | paste -sd,) $$ >/dev/null
 }
-
 
 # TODO better to change these2= 2 fct to only support reading data from stdin ?
 # convert binary data to hexadecimal;	$1=filepath (or empty for stdin)	$2=index/offset of byte to print (in decimal)	$3=nbr of bytes to print (if no set then 1)
