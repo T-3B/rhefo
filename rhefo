@@ -83,7 +83,7 @@ List of options (global ones first, then grouped by file type):
   if set, all lossy flags are set (except the more agressive --glob-strip)
   lossy flags *only* act on metadata; most of time they remove what
     is not really needed (such as the version of FLAC encoder)
---glob-norecur		worse compression, faster
+--glob-noextract | -n		worse compression, faster
   if set, do not compress embedded files (no "recursion")
 --glob-output=<path> | -o <path>
   <path> is output folder; default: inplace (overwrite input files)
@@ -160,7 +160,7 @@ find -name "*.flac" -type f -print0 | xargs -0 rhefo -o /outdir' |\
 parseArgs() {  # not using `local` vars because this fct is only exectued once
 	[ $(printf '\1' | od -dAn) = 1 ] || error 'This script was not tested on BIG ENDIAN devices. I mainly use `printf %x` with\nnumbers of up to 4 bytes.\nPLEASE, open an issue and if you have time HELP ME supporting this architecture\nby simply testing! This would really help a lot, since I only have little-endian\ndevices. Seriously, please.\n'
 	getopt -T && { error 'Your `getopt` is not compatible with this script. Open an issue.' 4;}
-	args=$(getopt -o hm:9j:klno:p:st:y -l help,glob-filemask:,glob-insane,glob-jobs:,glob-keeptime,glob-lossy,glob-norecur,glob-output:,glob-prefix:,glob-strip,glob-threads:,glob-tmp:,glob-update,flac-insane,flac-lossy,flac-subset,gzip-insane,gzip-lossy,mp3-lossy,png-insane,zip-insane -n rhefo -s bash -- "$@")
+	args=$(getopt -o h9j:klm:no:p:st:y -l help,glob-insane,glob-jobs:,glob-keeptime,glob-lossy,glob-filemask:,glob-noextract,glob-output:,glob-prefix:,glob-strip,glob-threads:,glob-tmp:,glob-update,flac-insane,flac-lossy,flac-subset,gzip-insane,gzip-lossy,mp3-lossy,png-insane,zip-insane -n rhefo -s bash -- "$@")
 	(($?)) && error 'Could not parse args. See the help message `rhefo -h`.'
 	TMPDIR=/dev/shm  # mktemp uses directly TMPDIR, so set it instead of another variable globtmp (or we should specify this variable as an argument)
 	eval set -- "$args"
@@ -168,13 +168,13 @@ parseArgs() {  # not using `local` vars because this fct is only exectued once
 	do case "$1" in
 			-h)						echo "${help%%$'\n'*}"; echo "$help" | grep '\[;33m'; echo 'Run `rhefo --help` for the full help.'; exit;;
 			--help)					echo "$help"; exit;;
-			-m | --glob-filemask)	[ "$2" ] || error "Filemask is empty."; globfilemask=$2; shift;;
 			-9 | --glob-insane)		flacinsane=;gzipinsane=;pnginsane=;zipinsane=;;
 			-j | --glob-jobs)		((0<$2)) || error "Wrong jobs int: '$2'."; globjobs=$2; shift;;
 			-k | --glob-keeptime)	globkeeptime=;;
 			-l | --glob-lossy)		gziplossy=;flaclossy=;mp3lossy=;;
+			-m | --glob-filemask)	[ "$2" ] || error "Filemask is empty."; globfilemask=$2; shift;;
+			-n | --glob-noextract)	globnoextract=;;
 			-o | --glob-output) 	[[ -d "$2" || -w "$2" ]] || error "Output directory '$2' does not exist or cannot write to it."; globoutput=$(realpath "$2" 2>/dev/null); shift;;
-			--glob-norecur)			globnorecur=;;
 			-p | --glob-prefix)		[ "$2" ] || error 'Prefix is empty.'; globprefix=$2; shift;;
 			-s | --glob-strip)		globstrip=;gziplossy=;flaclossy=;mp3lossy=;;
 			-t | --glob-threads)	((0<$2 && $2<=$(nproc --all))) || error "Wrong threads int: '$2'."; threadlimit $2; shift;;
@@ -291,7 +291,7 @@ ffCompressStreams() {
 
 # $1=filepath	$2=prefixpath	$3=filesize		("$2/$1" = full absolute input path)	(do NOT set $3 when this is a subcall from another compressFile - e.g. when compressFile a file from an extracted ZIP file); none can have spaces
 compressFile() {	# warning: $1 can be empty
-	[[ ! $3 && -v globnorecur ]] && return  # if this is a subcall compressFile and globnorecur is set, then do not optimize this file (as it's an embedded one)
+	[[ ! $3 && -v globnoextract ]] && return  # if this is a subcall compressFile and globnoextract is set, then do not optimize this file (as it's an embedded one)
 	set -a  # export everything automaticall (e.g. sub-parallel calls)
 	local a p v  # variables for temporary/intermediate values, ONLY SET THEM IN THE CASE SWITCH
 	local atime mtime size mime in=$2${1:+/$1} tmp tmpname tmp2 out
@@ -355,7 +355,7 @@ compressFile() {	# warning: $1 can be empty
 			# TODO  EPUBs, which require that the first entry in the ZIP be the mimetype file
 			#  TODO for android APK: "aur/apk-resigner 1-2 (+8 0.00)		A bash script utility that resigns the Android Package (APK) files (Android applications) with different certificates."
 			# search "apk" or "android" with yay, because many utils exist to edit apk
-			# tested softwares: minizip-ng, 7z, kzip, ect
+			# tested softwares: minizip-ng, 7z, kzip, leanify, ect
 			
 			# TODOOOOOOO input archived files do not keep their orig date
 			7z l -slt "$tmp" | grep '^Method = ' | grep -qve Store -e Deflate && p=  # at least one Method is not Store nor Deflate
@@ -476,7 +476,7 @@ compressFile() {	# warning: $1 can be empty
 
 			;;
 		image/png | image/x-png | image/vnd.mozilla.apng)
-			# Tested software: ECT, zopflipng_mrkrzych00; zopflipng_mrkrzych00 -y -m --iterations=999 --slowfix --all --lossy_transparent --alpha_cleaners=bhvapw --pass=999 in out
+			# Tested software: ECT, leanify, zopflipng_mrkrzych00; zopflipng_mrkrzych00 -y -m --iterations=999 --slowfix --all --lossy_transparent --alpha_cleaners=bhvapw --pass=999 in out
 			# ECT is the best Deflate encoder (looking at compression ratio only), so the only way to beat it is to bruteforce even more filters than `ect --allfilters-b --pal_sort=120` (not using this as it takes ages), but then if we find a better filter we could run ect on it and it will reuse the filter if gives better ratio
 			# TODO can apngopt sometimes do lossy things (iirc it will change the pixels to rgba(pc)) ?
 			# TODO remove useless alpha channel
@@ -511,7 +511,7 @@ compressFile() {	# warning: $1 can be empty
 
 # only one argument, the folder where we extracted the archive contents
 compressTmpFolder() {
-	[ -v globnorecur ] || find "$1" -type f -printf '%s\0%P\0%H\0' | perl -0ne 'push @rec, $_; if ($#rec == 2) { push @items, join("", @rec); @rec = (); } END { print(join("", sort { $b <=> $a } @items)) }' | parallel -0L3 --lb compressFile {2} {3}
+	[ -v globnoextract ] || find "$1" -type f -printf '%s\0%P\0%H\0' | perl -0ne 'push @rec, $_; if ($#rec == 2) { push @items, join("", @rec); @rec = (); } END { print(join("", sort { $b <=> $a } @items)) }' | parallel -0L3 --lb compressFile {2} {3}
 }
 
 warning() { printf "\033[1;33mW: %s\033[0m\n" "$1" >&2;}
