@@ -32,7 +32,7 @@
 #		TODOOOOOOOOOOOOOO binsort (binsort use simhash + find the shortest path - something like the Voyageur de Commerce - so try implementing with tlsh and nilsimsa)
 #		binsort wins by a large margin a greedy algorithm (take the closest file - with minimal distance - each time) with nilsimsa - didn't try tlsh as the CLI sucks
 
-# TODO control memory: take only what's needed (backup, copy, ...) in TMPDIR, if taking more (tmp2, decompressing archive, ...) do that in each case (specific to a mimie-type)
+# TODO control memory: take only what's needed (backup, copy, ...) in TMPDIR, if taking more (decompressing archive, ...) do that in each case (specific to a mimie-type)
 # put in a file what we can still use in mem to be safe, if not enough space wait until we can (can we do that with semaphores with parallel ?)
 # => add a setting "globmaxmem" to limit the maximum memory used at the same time in the TMPDIR folder (parallel has some parameter to suspend jobs if not enough mem - search for "mem" in man page)
 
@@ -184,7 +184,7 @@ parseArgs() {  # not using `local` vars because this fct is only exectued once
 			--glob-tmp)				[[ -d "$2" && -r "$2" && -w "$2" ]] && TMPDIR=$(realpath "$2") || { warning 'Could not use given --glob-tmp, using "/tmp" instead.'; TMPDIR=/tmp;}; shift;;
 			-y | --glob-update)		globupdate=;;
 			--flac-insane)			flacinsane=;;
-			--flac-lossy)			flaclossy;;
+			--flac-lossy)			flaclossy=;;
 			--flac-subset)			flacsubset=;;
 			--gzip-insane)			gzipinsane=;;
 			--gzip-lossy)			gziplossy=;;
@@ -199,8 +199,10 @@ parseArgs() {  # not using `local` vars because this fct is only exectued once
 	done
 	(($#)) || error 'No input given. See the help message `rhefo -h`.'
 	for i do [ -r "$i" ] || error "Input '$i' does not exist or cannot read it."; done
+	
+	TMPDIR=$(mktemp --tmpdir -d rhefo_${version}_tmpXXX)
 
-	printf '0\n0\n0\n' >"${globstatsfile=$(mktemp --tmpdir rhefo_${version}_tmpXXX)}"  # file where stats are wrote - to allow edit in subshells since we use `parallel`; 1st line is saved bytes, 2nd is input files size, 3rd is nbr input files
+	printf '0\n0\n0\n' >"${globstatsfile=$(mktemp --tmpdir XXX)}"  # file where stats are wrote - to allow edit in subshells since we use `parallel`; 1st line is saved bytes, 2nd is input files size, 3rd is nbr input files
 
 	addinsDir=$(mktemp -dp/tmp rhefo_${version}_tmpXXX)  # use /tmp for temp dir because we don't want weird chars (like ':') since we add it to PATH
 	PATH=$addinsDir:$PATH
@@ -219,7 +221,7 @@ parseArgs() {  # not using `local` vars because this fct is only exectued once
 		((s=SECONDS, h=s/3600, m=s/60-h*60, s%=60))
 		set -- $(<"$globstatsfile")
 		printf "\rCongrats! Processed %d files in %s and saved %sB (%.3f%%)!\n\a" $3 $(((h)) && printf ${h}h; ((m)) && printf ${m}m)${s}s $(numfmt --to=iec-i --format="%.2f" $1) $((1000000*$1/($2?$2:1)))e-4
-		rm -r "$globstatsfile" "$addinsDir"
+		rm -r "$globstatsfile" "$addinsDir" "$TMPDIR"
 	} &  # all the code is done in background so it won't be killed by Ctrl+C
 	while ! wait; do :; done  # each Ctrl+C will kill `wait` (1st hit: no new job, 2nd: kill parallel)
 }
@@ -298,10 +300,10 @@ compressFile() {	# warning: $1 can be empty
 	[[ ! $3 && -v globnoextract ]] && return  # if this is a subcall compressFile and globnoextract is set, then do not optimize this file (as it's an embedded one)
 	set -a  # export everything automaticall (e.g. sub-parallel calls)
 	local a p v  # variables for temporary/intermediate values, ONLY SET THEM IN THE CASE SWITCH
-	local atime mtime size mime in=$2${1:+/$1} tmp tmpname tmp2 out
+	local atime mtime size mime in=$2${1:+/$1} tmp tmpname out
 	atime=$(stat -c%x "$in")
 	mtime=$(stat -c%y "$in")
-	cd "$(mktemp --tmpdir -d rhefo_${version}_XXX)"  # keep every compressFile isolated from other threads, allows us to use "$tmp" with an additional filextension, or with one less, without worry
+	cd "$(mktemp --tmpdir -d XXX)"  # keep every compressFile isolated from other threads, allows us to use "$tmp" with an additional filextension, or with one less, without worry
 	tmp=$(mktemp -p"$PWD" --suff=."${in##*/}" XXX)  # always use tmp, so in!=tmp
 	#TODO check if $TMPDIR has enough free mem
 	out=$in
@@ -311,7 +313,6 @@ compressFile() {	# warning: $1 can be empty
 	cp "$in" "$tmp"  # TODO remove this and insert it in each switch case (since we need to read it once, read it when needed - and run directly a command with the processed data)
 	size=${3-$(wc -c <"$tmp")}
 	tmpname=${tmp##*/}
-	tmp2=${tmp%/*}/0$tmpname  # needs sometimes TODO check if can delete it (not use tmp2 anymore), since we have the certitude that in!=tmp
 
 	# TODO if mime=application/octet-stream, use FFmpeg to try to get the container name (or use a file mapping filextensions to mime-type)
 	case $(file -b --mime-type "$tmp") in  # see here for known MIME types: /usr/share/mime/types
@@ -319,7 +320,6 @@ compressFile() {	# warning: $1 can be empty
 			# tested tools: zopfli, zopfli MrKrzYch00's mod, gzip, 7z, minigzip (from minizip-ng). Tested on all files from silesia.tar (ect is far faster than zopfli(mod), and always gives smaller files - even when file is 1KB; ECT << zopfli < zopfli_mrkrzych00 << gzip); zopfli_mrkrzych00 --i9999 --mui999 --slowfix --t0 --pass9 --all androidsdk.svg
 			p=$(gzip -Nl "$in")
 			p=${p##*/}  # p= original decomp filename
-			tmp2=${tmp2%.*}  # TODO remove any extension, or only if extension is GZ (case *in*sensitive) ?
 			gzip -dc "$in" >"${tmp%.*}"
 			compressFile "${tmp%.*}"
 			gzip -1c$([[ -v gziplossy || "$p.gz" = "$tmpname" ]] && echo n) "${tmp%.*}" >"$tmp"
@@ -341,9 +341,9 @@ compressFile() {	# warning: $1 can be empty
 			# TODO
 			;;
 		application/x-compress)
-			flexiGIF -q --decompress "$in" "$tmp2"
-			compressFile "$tmp2"
-			flexiGIF -p -a=256 --compress "$tmp2" "$tmp";;  # TODO insane: remove -a=256
+			flexiGIF -q --decompress "$in" "${tmp%.*}"
+			compressFile "${tmp%.*}"
+			flexiGIF -p -a=256 --compress "${tmp%.*}" "$tmp";;  # TODO insane: remove -a=256
 		application/x-tar | application/x-cbt)  # TODO use binsort
 			# some metadata infos are not guarenteed to be kept (owner, permissions, atime/mtime)
 			v=$(mktemp -d)
@@ -415,8 +415,8 @@ compressFile() {	# warning: $1 can be empty
 				then metaflac --remove --dont-use-padding --block-type=VORBIS_COMMENT "$tmp"
 				else v=$(metaflac --show-vendor-tag "$tmp")
 					p=$(($(grep -abom1 "$v" "$tmp" | head -1 | cut -f1 -d:)-7))  # the first match is the vendor-string, use head because -om1 can output more than 1 match
-					{ dd status=none bs=$p count=1 iflag=fullblock; p=$((0x$(getBytes '' 0 3)-${#v})); intToBytes $p 3; intToBytes 0 4; dd status=none bs=4k iflag=fullblock iflag=skip_bytes skip=$((4+${#v}));} <"$tmp" >"$tmp2"  # TL;DR: 0xaaabbbb<vendorString>; aaa length metadata block in big endian, bbbb length vendor string in little
-					mv "$tmp2" "$tmp"
+					{ dd status=none bs=$p count=1 iflag=fullblock; p=$((0x$(getBytes '' 0 3)-${#v})); intToBytes $p 3; intToBytes 0 4; dd status=none bs=4k iflag=fullblock iflag=skip_bytes skip=$((4+${#v}));} <"$tmp" >"$tmp.new"  # TL;DR: 0xaaabbbb<vendorString>; aaa length metadata block in big endian, bbbb length vendor string in little
+					mv "$tmp.new" "$tmp"
 				fi
 			fi
 			[ -v a ] && { wait; for p in $a; do metaflac --append "$tmp" <"$tmp".$p.blockNew; rm "$tmp".$p.blockNew; done;};;  # we add PICTUREs back to the FLAC file
@@ -428,15 +428,16 @@ compressFile() {	# warning: $1 can be empty
 			# TODO compress album arts (idk if we can embed something else)
 			# TODO remove FFmpeg by more binary BASH logic, keep in mind that FFmpeg is only great for the UTF-16 -> UTF-8 conversion (check mp3unicode package) and Xing frame removal
 			mp3packer -z --workers 1 "$in" "$tmp" >/dev/null  # mp3packer always adds a Xing/LAME frame
-			ffmpeg -v error -y -i "$tmp" -map 0 -c copy -fflags +bitexact -write_xing 0 -metadata_header_padding 10 "$tmp2";  # FFmpeg 6.0 will ALWAYS write at least 10 bytes of padding (even if no ID3 metadata), so I use 10 padding too to prevent unpleasant surprise in the future
+			ffmpeg -v error -y -i "$tmp" -map 0 -c copy -fflags +bitexact -write_xing 0 -metadata_header_padding 10 "$tmp"  # FFmpeg 6.0 will ALWAYS write at least 10 bytes of padding (even if no ID3 metadata), so I use 10 padding too to prevent unpleasant surprise in the future
 			if [ -v globstrip ]
-			then mp3packer -s -t  "$tmp2" "$tmp"  >/dev/null  # remove everything that's not the MP3 stream itself
-			elif ((v=(0x$(getBytes "$tmp2" 6)<<21|0x$(getBytes "$tmp2" 7)<<14|0x$(getBytes "$tmp2" 8)<<7|0x$(getBytes "$tmp2" 9))-10))  # Easier to do the test after 1st ffmpeg command: if ID3 length is not 10 then trim, otherwise remove completely ID3 (since there is only padding).
-			then { dd status=none bs=6 count=1 iflag=fullblock; printf $(printf '\\x%x' $((v>>21)) $((v>>14&127)) $((v>>7&127)) $((v&127))); dd status=none bs=$v count=1 iflag=fullblock iflag=skip_bytes skip=4; dd status=none bs=4k iflag=fullblock iflag=skip_bytes skip=10;} <"$tmp2" >"$tmp"  # will remove the 10 bytes padding; ID3v2 length is big-endian
-			else ffmpeg -v error -y -i "$tmp2" -map 0 -c copy -fflags +bitexact -write_xing 0 -id3v2_version 0 "$tmp"
+			then mp3packer -s -t "$tmp" "$tmp.new"  >/dev/null  # remove everything that's not the MP3 stream itself
+			elif ((v=(0x$(getBytes "$tmp" 6)<<21|0x$(getBytes "$tmp" 7)<<14|0x$(getBytes "$tmp" 8)<<7|0x$(getBytes "$tmp" 9))-10))  # Easier to do the test after 1st ffmpeg command: if ID3 length is not 10 then trim, otherwise remove completely ID3 (since there is only padding).
+			then { dd status=none bs=6 count=1 iflag=fullblock; printf $(printf '\\x%x' $((v>>21)) $((v>>14&127)) $((v>>7&127)) $((v&127))); dd status=none bs=$v count=1 iflag=fullblock iflag=skip_bytes skip=4; dd status=none bs=4k iflag=fullblock iflag=skip_bytes skip=10;} <"$tmp" >"$tmp.new"  # will remove the 10 bytes padding; ID3v2 length is big-endian
+			else ffmpeg -v error -y -i "$tmp" -map 0 -c copy -fflags +bitexact -write_xing 0 -id3v2_version 0 "$tmp.new"
 			fi
+			mv "$tmp.new" "$tmp"
 			# use mp3packer to add Xing frame (with real duration) of 208 bytes (ffmpeg Xing frame is 522), could be even smaller than 208 bytes if I create it myself (since strings "mp3packer" or "Lavf" are written to Xing)
-			[ -v mp3lossy ] || mp3packer -u "$tmp" "$tmp2" >/dev/null;;
+			[ -v mp3lossy ] || mp3packer -u "$tmp" "$tmp.old" >/dev/null;;
 		image/gif)
 			# gifski and ImageMagick (-quality 100 -layers optimize) cannot recompress losslessly
 			# gifsicle and flexiGIF both can produce bigger output than input, only gifsicle *then* flexiGIF seems useful
@@ -460,7 +461,7 @@ compressFile() {	# warning: $1 can be empty
 			jpegtran -copy all -outfile "$tmp" "$in" && ect -9 -progressive -quiet "$tmp";;
 		image/jxl)
 			# -e 10 needs libjxl 0.8.0
-			# cjxl -e 9 -d 0 --brotli_effort=11 --num_threads=0 -I 100 -g 3 -E 11
+			# cjxl -e 9 -d 0 --brotli_effort=11 -I 100 -g 3 -E 11
 			# bruteforcing some settings will compress better (-g 1..3, --patches, ...): https://github.com/libjxl/libjxl/issues/426#issuecomment-898962219
 			# -e 10 will actually really bruteforce everything/every flag, no need for more than `-e 10 --allow_expert_options` (if cjxl uses more than 1 thread, no impact on the size) (more args is completely useless)
 			
@@ -502,7 +503,6 @@ compressFile() {	# warning: $1 can be empty
 			;;
 	esac
 	(((size-=$(wc -c <"$tmp"))<0)) && { warning "'$in': could not compress further. Input file was kept."; cp "$in" "$tmp"; size=0;}
-	rm -f "$tmp2"
 	[ -v globkeeptime ] && touch -md"$mtime" "$tmp" && touch -ad"$atime" "$tmp"
 	if [ $3 ]
 	then sem --fg --id "$globstatsfile" 'set -- $(<"$globstatsfile"); printf "$(('$size'+$1))\n$(('$3'+$2))\n$((1+$3))\n" >"$globstatsfile"'  # use a semaphore to allow only one thread to write stats at a time
