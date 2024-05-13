@@ -72,7 +72,7 @@ List of options (global ones first, then grouped by file type):
   only filenames matching the <mask> will be optimized (e.g. "*.mp3")
 --glob-insane | -9	better compression
   if set, all "insane" flags are set too (no quality/compatibility loss)
-  to "compress" better, consider --glob-lossy (only for lossy metadata)
+  to "compress" better; consider --glob-lossy (only for lossy metadata);
   compatibility-break and lossy flags are NOT set; TAKES A LOT OF TIME!!!
 --glob-jobs=<N> | -j<N>
   <N> files are optimized in parallel; default: same as --glob-threads
@@ -402,7 +402,7 @@ compressFile() {	# warning: $1 can be empty
 				# extract pictures (pics themselves and blocks), filenames written to array 'a'
 				parallel 'metaflac --block-number={} --export-picture-to="$tmp".{} "$tmp"; metaflac --block-number={} --list --data-format=binary "$tmp" >"$tmp".{}.block' ::: $a
 				metaflac --remove --block-type=PICTURE "$tmp"  # remove pics, since we append them later
-				globstrip= parallel --lb 's=$(wc -c <"$tmp".{}); compressFile "$tmp".{}; t=$(wc -c <"$tmp".{}); { intToBytes $((0x$(getBytes "" 0 4)-s+t)) 4; head -c $(($(wc -c <"$tmp".{}.block)-s-8)); intToBytes $t 4; cat "$tmp".{};} <"$tmp".{}.block >"$tmp".{}.blockNew; rm "$tmp".{}{,.block}' ::: $a & # compress PICTURES in parallel with --glob-strip; Taking the first 4 bytes as block length even if the first one isn't, easier to implement and works. We update block length, image data length and image data.
+				parallel --lb 's=$(wc -c <"$tmp".{}); [ -v flaclossy ] && export globstrip=; compressFile "$tmp".{}; t=$(wc -c <"$tmp".{}); { intToBytes $((0x$(getBytes "" 0 4)-s+t)) 4; head -c $(($(wc -c <"$tmp".{}.block)-s-8)); intToBytes $t 4; cat "$tmp".{};} <"$tmp".{}.block >"$tmp".{}.blockNew; rm "$tmp".{}{,.block}' ::: $a & # compress PICTURES in parallel with --glob-strip; Taking the first 4 bytes as block length even if the first one isn't, easier to implement and works. We update block length, image data length and image data.
 				# now the {}.blockNew contains the opt picture, with correct size. todo Colors (the 4 bytes just before pic size) could be changed for example by ECT. Colors are the number of indexed colors; tried and everything works on PC if it's not updated; we could use `identify -verbose "$tmp"` and look at "Colormap entries:", if not in output then not indexed (at least for PNG), would add a dependency I don't want. Could also remove all block from FLAC, try to import pic and let FLAC figure it out (Colors) for me then copy (too much work for what it brings)
 			fi
 			flac "$tmp" -smepfb 4096 -P 0 -r ${flacsubset+8 -l $(($(metaflac --show-sample-rate "$tmp")>48000?32:12))} ${flacsubset-15 -l 32 --lax} -A subdivide_tukey\(4${flacinsane+0}\)
@@ -414,7 +414,7 @@ compressFile() {	# warning: $1 can be empty
 				then metaflac --remove --dont-use-padding --block-type=VORBIS_COMMENT "$tmp"
 				else v=$(metaflac --show-vendor-tag "$tmp")
 					p=$(($(grep -abom1 "$v" "$tmp" | head -1 | cut -f1 -d:)-7))  # the first match is the vendor-string, use head because -om1 can output more than 1 match
-					{ dd status=none bs=$p count=1 iflag=fullblock; p=$((0x$(getBytes '' 0 3)-${#v})); intToBytes $p 3; intToBytes 0 4; dd status=none bs=4k iflag=fullblock iflag=skip_bytes skip=$((4+${#v}));} <"$tmp" >"$tmp.new"  # TL;DR: 0xaaabbbb<vendorString>; aaa length metadata block in big endian, bbbb length vendor string in little
+					{ dd status=none bs=$p count=1 iflag=fullblock; ((p=0x$(getBytes '' 0 3)-${#v})); intToBytes $p 3; intToBytes 0 4; dd status=none bs=4k iflag=fullblock iflag=skip_bytes skip=$((4+${#v}));} <"$tmp" >"$tmp.new"  # TL;DR: 0xaaabbbb<vendorString>; aaa length metadata block in big endian, bbbb length vendor string in little
 					mv "$tmp.new" "$tmp"
 				fi
 			fi
