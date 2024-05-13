@@ -44,13 +44,11 @@
 # rsync source destination/   (copy folder `source` in destination - one more depth)
 # rsync source/ destination/   (copy content of folder `source` - not itself)
 
-# TODO do not use /dev/shm but always /tmp ? If it's RAM (always ? idk)
-# and TODO use a folder INSIDE the tmpfolder, so for future implementations it can be reused easily
-
 # TODO allow mask to be mimetype if contains a '/' (like 'image/*')
 
 # TODO what about how lossy and strip works ?
 # do something like --<postfix>-strip where <postfix> is the last part of the filename (perhaps better if prefix of mimetype)
+# do same hing about -insane
 
 set -a  # export var+fct automatically
 set -m  # All processes run in a separate process group (needed for Ctrl+C "trick")
@@ -221,7 +219,7 @@ parseArgs() {  # not using `local` vars because this fct is only exectued once
 		((s=SECONDS, h=s/3600, m=s/60-h*60, s%=60))
 		set -- $(<"$globstatsfile")
 		printf "\rCongrats! Processed %d files in %s and saved %sB (%.3f%%)!\n\a" $3 $(((h)) && printf ${h}h; ((m)) && printf ${m}m)${s}s $(numfmt --to=iec-i --format="%.2f" $1) $((1000000*$1/($2?$2:1)))e-4
-		rm -r "$globstatsfile" "$addinsDir" # "$TMPDIR"
+		rm -r "$globstatsfile" "$addinsDir" "$TMPDIR"
 	} &  # all the code is done in background so it won't be killed by Ctrl+C
 	while ! wait; do :; done  # each Ctrl+C will kill `wait` (1st hit: no new job, 2nd: kill parallel)
 }
@@ -300,9 +298,10 @@ compressFile() {	# warning: $1 can be empty
 	[[ ! $3 && -v globnoextract ]] && return  # if this is a subcall compressFile and globnoextract is set, then do not optimize this file (as it's an embedded one)
 	set -a  # export everything automaticall (e.g. sub-parallel calls)
 	local a p v  # variables for temporary/intermediate values, ONLY SET THEM IN THE CASE SWITCH
-	local atime mtime size mime in=$2${1:+/$1} tmp tmpname out
+	local atime mtime umask size in=$2${1:+/$1} tmp tmpname out
 	atime=$(stat -c%x "$in")
 	mtime=$(stat -c%y "$in")
+	umask=$(stat -c%a "$in")
 	cd "$(mktemp --tmpdir -d XXX)"  # keep every compressFile isolated from other threads, allows us to use "$tmp" with an additional filextension, or with one less, without worry
 	tmp=$(mktemp -p"$PWD" --suff=."${in##*/}" XXX)  # always use tmp, so in!=tmp
 	#TODO check if $TMPDIR has enough free mem
@@ -345,7 +344,7 @@ compressFile() {	# warning: $1 can be empty
 			compressFile "${tmp%.*}"
 			flexiGIF -p -a=256 --compress "${tmp%.*}" "$tmp";;  # TODO insane: remove -a=256
 		application/x-tar | application/x-cbt)  # TODO use binsort
-			# some metadata infos are not guarenteed to be kept (owner, permissions, atime/mtime)
+			# some metadata infos are not guarenteed to be kept (owner, umask, atime/mtime)
 			v=$(mktemp -d)
 			tar xf "$tmp" -C"$v"
 			rm "$tmp"
@@ -429,7 +428,8 @@ compressFile() {	# warning: $1 can be empty
 			# TODO remove FFmpeg by more binary BASH logic, keep in mind that FFmpeg is only great for the UTF-16 -> UTF-8 conversion (check mp3unicode package) and Xing frame removal
 			mp3packer -z --workers 1 -f "$in" "$tmp" >/dev/null  # mp3packer always adds a Xing/LAME frame
 			echo WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW
-			ffmpeg -v error -y -i "$tmp" -map 0 -c copy -fflags +bitexact -write_xing 0 -metadata_header_padding 10 "$tmp.mp3"  # FFmpeg 6.0 will ALWAYS write at least 10 bytes of padding (even if no ID3 metadata), so I use 10 padding too to prevent unpleasant surprise in the future
+			# TODO REMOVE FFmpeg AT ALL COSTS!!!!!!! It cannot copy losslessly the MP3 stream LOL. I just opened a ticket for it: https://trac.ffmpeg.org/ticket/10995
+			ffmpeg -v error -i "$tmp" -map 0 -c copy -fflags +bitexact -write_xing 0 -metadata_header_padding 10 "$tmp.mp3"  # FFmpeg 6.0 will ALWAYS write at least 10 bytes of padding (even if no ID3 metadata), so I use 10 padding too to prevent unpleasant surprise in the future
 			echo AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 			if [ -v globstrip ]
 			then mp3packer -s -t -f "$tmp.mp3" "$tmp"  >/dev/null  # remove everything that's not the MP3 stream itself
@@ -438,6 +438,7 @@ compressFile() {	# warning: $1 can be empty
 				{ dd status=none bs=6 count=1 iflag=fullblock; printf $(printf '\\x%x' $((v>>21)) $((v>>14&127)) $((v>>7&127)) $((v&127))); dd status=none bs=$v count=1 iflag=fullblock iflag=skip_bytes skip=4; dd status=none bs=4k iflag=fullblock iflag=skip_bytes skip=10;} <"$tmp.mp3" >"$tmp"  # will remove the 10 bytes padding; ID3v2 length is big-endian
 			else ffmpeg -v error -y -i "$tmp.mp3" -map 0 -c copy -fflags +bitexact -write_xing 0 -id3v2_version 0 "$tmp"
 			fi
+			exit
 			# use mp3packer to add Xing frame (with real duration) of 208 bytes (ffmpeg Xing frame is 522), TODO could be even smaller than 208 bytes if I create it myself (since strings "mp3packer" or "Lavf" are written to Xing)
 			echo PPPPPPPPPPPPPPPPPPPPPp
 			[ -v mp3lossy ] || mp3packer -u "$tmp" "$tmp.old" >/dev/null;;
@@ -455,7 +456,7 @@ compressFile() {	# warning: $1 can be empty
 			# Try to `jpegtran -rotate x -perfect -outfile out.jpg in.jpg` with rotation written in Exif (WARNING may also be mirrored), will exit with $?=1 if not lossless transformation  (CHECK ALSO `ect -autorotate`)
 			# TODO add -arithmetic coding with $jpgbroken
 			# TODO jpegultrascan: always use -i (sometimes smaller output, but never bigger); maybe try -o 'jpegtran -revert' to know if the errors I got with recompressing wallpapers (too many scans) are solved with that (try also for other files)
-			# -b13 seems only useful for big files, no output size diff for < 1MB
+			# -b3 is really rarely beaten by high numbers
 			
 			# TODOOOOOOOOOOOOOOOOO copy icc will drop the rotation of the image!!!!!!!!!!!!!!!!!!!!!!
 			# TODO in average, ect -progressive gives smaller files than jpegtran (use `-9` because presets >= 5 have different behavior than smaller ones)
@@ -506,6 +507,7 @@ compressFile() {	# warning: $1 can be empty
 			;;
 	esac
 	(((size-=$(wc -c <"$tmp"))<0)) && { warning "'$in': could not compress further. Input file was kept."; cp "$in" "$tmp"; size=0;}
+	chmod $umask "$tmp"
 	[ -v globkeeptime ] && touch -md"$mtime" "$tmp" && touch -ad"$atime" "$tmp"
 	if [ $3 ]
 	then sem --fg --id "$globstatsfile" 'set -- $(<"$globstatsfile"); printf "$(('$size'+$1))\n$(('$3'+$2))\n$((1+$3))\n" >"$globstatsfile"'  # use a semaphore to allow only one thread to write stats at a time
