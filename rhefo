@@ -26,7 +26,7 @@
 # TODO depending on whether we have lots of input files or not, run single-threaded jobs in parallel or a few jobs each taking multiple threads respectively (jpegultrascan -t x; ...). "input files < #threads" ?
 
 # TODO add globarchnoroot to remove root folder if there is only one folder
-# TODO add option to remove __MACOSX folder from inside archives add to globarch-lossy
+# TODO add option to remove __MACOSX folder from inside archives add to globarch-lossy and .DStore
 
 # TODO for all the solid archive compressors, different file sortings will give different sizes (remember, do it too in TAR for .tar-based)
 #		TODOOOOOOOOOOOOOO binsort (binsort use simhash + find the shortest path - something like the Voyageur de Commerce - so try implementing with tlsh and nilsimsa)
@@ -36,7 +36,6 @@
 # put in a file what we can still use in mem to be safe, if not enough space wait until we can (can we do that with semaphores with parallel ?)
 # => add a setting "globmaxmem" to limit the maximum memory used at the same time in the TMPDIR folder (parallel has some parameter to suspend jobs if not enough mem - search for "mem" in man page)
 
-# TODO add --glob-nosort to not sort input by size (if input is given with something like find)
 # TODO change zip-nodeflate to zip-broken (so use also flac-broken for flaccid); *-broken == better comp but (far) less compatibility/support
 # TODO use jpg-broken for jpegtran -arithmetic
 
@@ -83,8 +82,10 @@ List of options (global ones first, then grouped by file type):
   if set, all lossy flags are set (except the more agressive --glob-strip)
   lossy flags *only* act on metadata; most of time they remove what
     is not really needed (such as the version of FLAC encoder)
---glob-noextract | -n		worse compression, faster
+--glob-noextract | -E		worse compression, faster
   if set, do not compress embedded files (no "recursion")
+--glob-nosort | -S
+  if set, optimize files in the given order; default: sort by size (largest 1st)
 --glob-output=<path> | -o <path>
   <path> is output folder; default: inplace (overwrite input files)
   even if set, --glob-tmp is still used
@@ -126,17 +127,16 @@ List of options (global ones first, then grouped by file type):
   default is to only use Deflate if input has only Deflate streams
   warning, many softwares do NOT support other stream but Deflate
 
+If you think the script is taking too much time, do not hesitate to hit Ctrl+C!
+The first Ctrl+C will tell RHEFO to not start any new job and to gently finish
+currently running jobs. The second one will abruptly stop all jobs.
+In both cases, temp files are cleaned and compression summary is printed.
+
 Use `grep` with this help, it is easy! Try `grep -e --flac -e --glob`.
 Want further help/understanding on what/why really is done under the hood? Read
 the comments in this script. You could learn how to compress even more than this
 script will allow you (but you probably will compress 1 KB per minute).
 Do not let me think I wrote these comments for nothing :´)
-
-If you think the script is taking too much time, do not hesitate to hit Ctrl+C!
-The first Ctrl+C will tell RHEFO to not start any new job and to gently finish
-currently running jobs (all temp files are cleaned). The second will abruptly
-stop all jobs, and information on files already processed will be displayed in
-less than a second (temp files are NOT cleaned, and there may be many of them).
 
 Examples of usage:
 # optimize recursively current dir, inplace
@@ -160,7 +160,7 @@ find -name "*.flac" -type f -print0 | xargs -0 rhefo -o /outdir' |\
 parseArgs() {  # not using `local` vars because this fct is only exectued once
 	[ $(printf '\1' | od -dAn) = 1 ] || error 'This script was not tested on BIG ENDIAN devices. I mainly use `printf %x` with\nnumbers of up to 4 bytes.\nPLEASE, open an issue and if you have time HELP ME supporting this architecture\nby simply testing! This would really help a lot, since I only have little-endian\ndevices. Seriously, please.\n'
 	getopt -T && { error 'Your `getopt` is not compatible with this script. Open an issue.' 4;}
-	args=$(getopt -o hx:9j:klm:no:p:st:y -l help,extract-addins:,glob-insane,glob-jobs:,glob-keeptime,glob-lossy,glob-filemask:,glob-noextract,glob-output:,glob-prefix:,glob-strip,glob-threads:,glob-tmp:,glob-update,flac-insane,flac-lossy,flac-subset,gzip-insane,gzip-lossy,mp3-lossy,png-insane,zip-insane -n rhefo -s bash -- "$@")
+	args=$(getopt -o hx:9j:klm:ESo:p:st:y -l help,extract-addins:,glob-insane,glob-jobs:,glob-keeptime,glob-lossy,glob-filemask:,glob-noextract,glob-nosort,glob-output:,glob-prefix:,glob-strip,glob-threads:,glob-tmp:,glob-update,flac-insane,flac-lossy,flac-subset,gzip-insane,gzip-lossy,mp3-lossy,png-insane,zip-insane -n rhefo -s bash -- "$@")
 	(($?)) && error 'Could not parse args. See the help message `rhefo -h`.'
 	TMPDIR=/dev/shm  # mktemp uses directly TMPDIR, so set it instead of another variable globtmp (or we should specify this variable as an argument)
 	eval set -- "$args"
@@ -174,7 +174,8 @@ parseArgs() {  # not using `local` vars because this fct is only exectued once
 			-k | --glob-keeptime)	globkeeptime=;;
 			-l | --glob-lossy)		gziplossy=;flaclossy=;mp3lossy=;;
 			-m | --glob-filemask)	[ "$2" ] || error "Filemask is empty."; globfilemask=$2; shift;;
-			-n | --glob-noextract)	globnoextract=;;
+			-E | --glob-noextract)	globnoextract=;;
+			-S | --glob-nosort)		globnosort=;;
 			-o | --glob-output) 	[[ -d "$2" || -w "$2" ]] || error "Output directory '$2' does not exist or cannot write to it."; globoutput=$(realpath "$2" 2>/dev/null); shift;;
 			-p | --glob-prefix)		[ "$2" ] || error 'Prefix is empty.'; globprefix=$2; shift;;
 			-s | --glob-strip)		globstrip=;gziplossy=;flaclossy=;mp3lossy=;;
@@ -211,7 +212,7 @@ parseArgs() {  # not using `local` vars because this fct is only exectued once
 	# get absolute path, find all files (print size, filepath, input folderpath), sort (biggest size first), compress in parallel
 	{
 		# TODO parallel --memsuspend
-		realpath -z -- "$@" | xargs -0i find '{}' -type f ${globfilemask+-name "$globfilemask"} -printf '%s\0%P\0%H\0' | perl -0ne 'push @rec, $_; if ($#rec == 2) { push @items, join("", @rec); @rec = (); } END { print(join("", sort { $b <=> $a } @items)) }' | parallel -j${globjobs-100%} -0L3 --lb --bar compressFile {2} {3} {1} 1
+		realpath -z -- "$@" | xargs -0i find '{}' -type f ${globfilemask+-name "$globfilemask"} -printf '%s\0%P\0%H\0' | { [ -v globnosort ] && cat || sortFilesBySize;} | parallel -j${globjobs-100%} -0L3 --lb --bar compressFile {2} {3} {1} 1
 		# Thanks for the people helping me finding a way to sort by filesize (sorting by group of 3 elements): https://stackoverflow.com/a/76028193/13227011
 		# TODO don't compressFile duplicates (explicitly twice same input or implicitely - with the file and the parent folder)
 		# TODO test with filenames having $@-*
@@ -238,6 +239,11 @@ threadlimit() {
 
 	taskset -acp $(paste <(awk '/^cpu[0-9]/{print $4+$5}' /proc/stat) <(sleep 5; awk '/^cpu[0-9]/{print $4+$5}' /proc/stat) \
 					| awk '{print $2-$1, NR-1}' | sort -n | tail -$1 | cut -d' ' -f2 | paste -sd,) $$ >/dev/null
+}
+
+# input should be `find -printf '%s\0%P\0%H\0'`, output will be '%P\0%H\0%s\0' and elements sorted with largest %s first
+sortFilesBySize() {
+	perl -0ne 'push @rec, $_; if ($#rec == 2) { push @items, join("", @rec); @rec = (); } END { print(join("", sort { $b <=> $a } @items)) }'
 }
 
 # TODO better to change these2= 2 fct to only support reading data from stdin ?
@@ -525,7 +531,7 @@ compressFile() {	# warning: $1 can be empty
 
 # only one argument, the folder where we extracted the archive contents
 compressTmpFolder() {
-	[ -v globnoextract ] || find "$1" -type f -printf '%s\0%P\0%H\0' | perl -0ne 'push @rec, $_; if ($#rec == 2) { push @items, join("", @rec); @rec = (); } END { print(join("", sort { $b <=> $a } @items)) }' | parallel -0L3 --lb compressFile {2} {3}
+	[ -v globnoextract ] || find "$1" -type f -printf '%s\0%P\0%H\0' | sortFilesBySize | parallel -0L3 --lb compressFile {2} {3}
 }
 
 warning() { printf "\033[1;33mW: %s\033[0m\n" "$1" >&2;}
