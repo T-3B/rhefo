@@ -291,6 +291,7 @@ compressFile() {	# warning: $1 can be empty
 	tmp=$(mktemp -p"$PWD" --suff=."${in##*/}" XXX)  # always use tmp, so in!=tmp
 	#TODO check if $TMPDIR has enough free mem
 	out=$in
+	[ $3 ] && local inParent=$in
 	[[ $3 && -v globoutput ]] && out=$globoutput/${2##*/}${1:+/$1}
 	[[ $3 && -v globprefix ]] && out=${out%/*}/$globprefix${out##*/}
 	[[ $3 && (-v globoutput || -v globprefix) && ! -v globupdate && -e "$out" ]] && { warning "'$out' already exists, file not compressed nor updated. Rerun with -y to overwrite files in output directory, or with -p to add a prefix.";rm -f "$tmp";return;}
@@ -340,7 +341,7 @@ compressFile() {	# warning: $1 can be empty
 			# TODOOOOOOOOOOOO WARNING some uncompressed files need to stay uncompressed (like mimetype in epub - epub is a "disguised" ZIP). Use extension to differentiate EPUB from ZIP
 			# TODO check application/epub+zip, application/vnd.comicbook+zip, application/x-zip-compressed-fb2,
 			# TODO for 7z there are plug-ins : https://www.tc4shell.com/en/7zip/ (zstd, Brotli, LZ4, LZ5, Lizard, Fast LZMA2 and many more)
-			# TODO  EPUBs, which require that the first entry in the ZIP be the mimetype file
+			# TODO  EPUBs, which require that the first entry in the ZIP be the mimetype file non-compressed
 			#  TODO for android APK: "aur/apk-resigner 1-2 (+8 0.00)		A bash script utility that resigns the Android Package (APK) files (Android applications) with different certificates."
 			# search "apk" or "android" with yay, because many utils exist to edit apk
 			# tested softwares: minizip-ng, 7z, kzip, leanify, ect
@@ -495,7 +496,7 @@ compressFile() {	# warning: $1 can be empty
 			#upx -9 --ultra-brute -o out in
 			;;
 	esac
-	(((size-=$(wc -c <"$tmp"))<=0)) && { warning "'$in': could not compress further. Input file was kept."; cp "$in" "$tmp"; size=0;}
+	(((size-=$(wc -c <"$tmp"))<=0)) && { info "'$in'$([ $3 ] || echo " (embedded file from '$inParent')"): could not compress further. Input file was kept."; cp "$in" "$tmp"; size=0;}
 	chmod $umask "$tmp"
 	[ -v globkeeptime ] && touch -md"$mtime" "$tmp" && touch -ad"$atime" "$tmp"
 	if [ $3 ]
@@ -530,10 +531,10 @@ ctrlCHandler() {
 	else
 		ctrlc=
 		{	kill -HUP $(pstree -ap $$ | grep parallel | grep -oP '^.*?\K[0-9]+') 2>/dev/null  # do NOT start any new job in any `parallel` (even grandchild processes)
-			sleep .1  # so the following msg will be shown *after* parallel's output about no new job
+			sleep .01  # so the following msg will be shown *after* parallel's output about no new job
 			printf "\r%${COLUMNS}s\r" ''  # erase progress bar from parallel
 			info 'Finishing running jobs, hit Ctrl+C again to stop them.'
-		} &  # run in background so if we hit **again** Ctrl+C super fast (< .1 sec), ctrlCHandler won't be killed
+		} &  # run in background so if we hit **again** Ctrl+C super fast (< .01 sec), ctrlCHandler won't be killed
 	fi
 }
 
