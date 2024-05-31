@@ -232,7 +232,7 @@ parseArgs() {  # not using `local` vars because this fct is only exectued once
 		info "$(printf "Congrats! Processed %d files in %s and saved %sB (%.3f%%)!\a" $3 $( ((h)) && printf ${h}h; ((m)) && printf ${m}m)${s}s $(numfmt --to=iec-i --format="%.2f" $1) $((1000000*$1/($2?$2:1)))e-4)"
 		rm -r "$globstatsfile" "$addinsDir" "$TMPDIR"
 	} &  # all the code is done in background so it won't be killed by Ctrl+C
-	while ! wait; do :; done  # each Ctrl+C will kill `wait` (1st hit: no new job, 2nd: kill parallel)
+	until wait; do :; done  # each Ctrl+C will kill `wait` (1st hit: no new job, 2nd: kill parallel)
 }
 
 # $1 = folder where to extract all the add-ins
@@ -481,16 +481,17 @@ compressFile() {	# warning: $1 can be empty
 			# TODO remove useless alpha channel
 			if [ $(ffprobe -v warning -show_entries stream=codec_name -of default=nk=1:nw=1 "$tmp") = apng ]
 			then # ect -1 ${globstrip+-strip} "$tmp"  # TODO (cannot strip using ECT since it drops all other frames - only 1st one is kept)
-				apngopt -z2 -i99${pnginsane+999} "$in" "$tmp" >/dev/null  # TODO to do better, we could split frames, use ECT --reuse, them remux
+				apngopt -z2 -i99${pnginsane+999} "$in" "$tmp" >/dev/null  # TODO to do better, we could split frames, use ECT --reuse, them remux   ;; TODO try pingo
 			else mv "$tmp" "$tmp.png"
 				ect -${pnginsane+8019}9 --mt-deflate -quiet ${globstrip+-strip} "$tmp.png"  # ect needs correct extension
 				# If the value is above 10000, the blocksplitting-compression cycle is repeated # / 10000 times. If # % 10000 is above 9, level 9 is used and the number of iterations of deflate compression per block is set to # % 10000. If # % 10000 is 9 or below, this number specifies the level.
 				mv "$tmp.png" "$tmp"
 			fi;;
 		image/webp)  # only tested cwebp; cwebp -z9 is NOT always the smallest one! Therefore just bruteforce -z (which is an alias for -m and -q options)
-			# TODO do not do this for lossy images (test with webpinfo)
-			parallel cwebp -quiet -lossless -alpha_filter best -metadata all -z {} "$tmp" -o "$tmp".{} ::: {0..9}
-			catchSmallestFile "$tmp".*;;
+			if webpinfo "$in" | grep -q 'Format: Lossless (2)'
+			then parallel cwebp -quiet -lossless -alpha_filter best -metadata ${globstrip+icc}${globstrip-all} -z {} "$in" -o "$tmp".{} ::: {0..9}
+				catchSmallestFile "$tmp".*
+			fi;;
 		*)
 			# application/x-executable (TODO test if this MIME type is the only one for executables)
 			#upx -9 --ultra-brute -o out in
