@@ -295,7 +295,6 @@ compressFile() {	# warning: $1 can be empty
 	[[ $3 && -v globoutput ]] && out=$globoutput/${2##*/}${1:+/$1}
 	[[ $3 && -v globprefix ]] && out=${out%/*}/$globprefix${out##*/}
 	[[ $3 && (-v globoutput || -v globprefix) && ! -v globupdate && -e "$out" ]] && { warning "'$out' already exists, file not compressed nor updated. Rerun with -y to overwrite files in output directory, or with -p to add a prefix.";rm -f "$tmp";return;}
-	cp "$in" "$tmp"  # TODO remove this and insert it in each switch case (since we need to read it once, read it when needed - and run directly a command with the processed data)
 	size=${3-$(wc -c <"$tmp")}
 	tmpname=${tmp##*/}
 
@@ -313,7 +312,7 @@ compressFile() {	# warning: $1 can be empty
 		application/pdf)  # TODO there is also `mutool extract`;	for lossless recompression check, see `mutool draw` (converts pdf to vector graphics)
 			# TODO: best combination: cpdf -> pdfsizeopt -> mutool clean -> qpdf
 			# Warning I don't think it's always the same order giving smallest file
-			mutool clean -gggg "$tmp" "$tmp"  # at least clean once
+			mutool clean -gggg "$in" "$tmp"  # at least clean once
 			p=$(wc -c <"$tmp")
 			while v=$p; mutool clean -gggg "$tmp" "$tmp"; p=$(wc -c <"$tmp"); ((p<v)); do :; done  # repeat, until size stops decreasing, "garbage collect objects/streams + merge/reuse duplicates + compact cross ref table"; I saw a file that needed 7 iterations
 			qpdf --recompress-flate --compression-level=9 --object-streams=generate --decode-level=specialized --replace-input "$tmp"  # don't use decode-level=all or bigger output
@@ -332,8 +331,7 @@ compressFile() {	# warning: $1 can be empty
 		application/x-tar | application/x-cbt)  # TODO use binsort
 			# some metadata infos are not guarenteed to be kept (owner, umask, atime/mtime)
 			v=$(mktemp -d)
-			tar xf "$tmp" -C"$v"
-			rm "$tmp"
+			tar xf "$in" -C"$v"
 			compressTmpFolder "$v"
 			find "$v" \( ! -type d -o -empty \) -printf %P\\0 | tar cf "$tmp" -b1 --no-recursion --null -C"$v" -T-  # use `find` to not store any prefix (`./`) in tar contents; by default `tar` uses 20x512 bytes block for alignment, use `-b1` for only one; do not store non-empty dir as a separate element in the tar
 			rm -r "$v";;
@@ -346,17 +344,16 @@ compressFile() {	# warning: $1 can be empty
 			# search "apk" or "android" with yay, because many utils exist to edit apk
 			# tested softwares: minizip-ng, 7z, kzip, leanify, ect
 
-			7z l -slt "$tmp" | grep '^Method = ' | grep -qve Store -e Deflate && p=  # at least one Method is not Store nor Deflate
+			7z l -slt "$in" | grep '^Method = ' | grep -qve Store -e Deflate && p=  # at least one Method is not Store nor Deflate
 			v=$(mktemp -d)
-			7z x "$tmp" -o"$v" >/dev/null
-			rm "$tmp"
+			7z x "$in" -o"$v" >/dev/null
 			compressTmpFolder "$v"
 			if [[ -v zipnodeflate || -v p ]]
 			then : # TODO
 			else  # even if `zip -9` only uses 100% cpu, compressed 2.2GB with 660 files in 67 seconds (fast enough). Could take less (but more mem) time by compressing each file in its own zip, ect all of them in parallel (because ect takes each file in the archive one after the other), then merge them (using zipmerge from libzip)
 				cd "$v"
 				find . -type d -empty -print0 | xargs -r0 zip -q "$tmp"
-				zip -9rDq "$tmp" .  # -9 because forces everything > ~64 bytes to be compressed with Deflate (even if output is bigger) - useful as ect will NOT compress uncompressed files (and if Deflate stream is bigger than input data, ect will store the file uncompressed)
+				zip -9rDq "$tmp" .  # -D to not add dirs; -9 forces everything > ~64 bytes to be compressed with Deflate (even if output is bigger) - useful as ect will NOT compress uncompressed files (and if Deflate stream is bigger than input data, ect will store the file uncompressed)
 				cd - >/dev/null
 				rm -r "$v"
 				ect -9${zipinsane+9999} -quiet -zip --strict --mt-deflate "$tmp"  # using --strict makes sure ECT does not try to optimize archived files (so it will only optimize Deflate compression in ZIP, not embedded files themselves)
@@ -381,7 +378,7 @@ compressFile() {	# warning: $1 can be empty
 			# TODO bruteforce blocksize (the size providing best ratio - mean - is 4096 with actual flags)
 			
 			# Warning! Do not use ffmpeg as it merges all tags with the same key within a single tag (with ';' as a separator).
-			
+			cp "$in" "$tmp"
 			if ! [ -v globstrip ]
 			then a=$(metaflac --list --block-type=PICTURE "$tmp" | grep -oP '(?<=^METADATA block #)\d+$')  # PICTURE blocks IDs
 				# extract pictures (pics themselves and blocks), filenames written to array 'a'
@@ -452,7 +449,7 @@ compressFile() {	# warning: $1 can be empty
 			# TODO in average, ect -progressive gives smaller files than jpegtran (use `-9` because presets >= 5 have different behavior than smaller ones)
 			
 			# TODO `jhead -du` Or -purejpg which is a combination of params including -du; this command allowed Fox Wizard to beat me again (6 bytes smaller - metadata - than `ultrascan -b 13 -t 16 -a -i -s` !arithmetic!, ECT nor jpegtran could remove these 6 bytes)
-			jpegtran -copy all -outfile "$tmp" "$in" && ect -9 -progressive -quiet "$tmp";;
+			jpegtran -copy all -outfile "$tmp" "$in" && ect -9 -progressive -quiet ${globstrip+-strip} "$tmp";;
 		image/jxl)
 			# -e 10 needs libjxl 0.8.0
 			# cjxl -e 9 -d 0 --brotli_effort=11 -I 100 -g 3 -E 11
@@ -479,10 +476,10 @@ compressFile() {	# warning: $1 can be empty
 			# ECT is the best Deflate encoder (looking at compression ratio only), so the only way to beat it is to bruteforce even more filters than `ect --allfilters-b --pal_sort=120` (not using this as it takes ages), but then if we find a better filter we could run ect on it and it will reuse the filter if gives better ratio
 			# TODO can apngopt sometimes do lossy things (iirc it will change the pixels to rgba(pc)) ?
 			# TODO remove useless alpha channel
-			if [ $(ffprobe -v warning -show_entries stream=codec_name -of default=nk=1:nw=1 "$tmp") = apng ]
+			if [ $(ffprobe -v warning -show_entries stream=codec_name -of default=nk=1:nw=1 "$in") = apng ]
 			then # ect -1 ${globstrip+-strip} "$tmp"  # TODO (cannot strip using ECT since it drops all other frames - only 1st one is kept)
 				apngopt -z2 -i99${pnginsane+999} "$in" "$tmp" >/dev/null  # TODO to do better, we could split frames, use ECT --reuse, them remux   ;; TODO try pingo
-			else mv "$tmp" "$tmp.png"
+			else cp "$in" "$tmp.png"
 				ect -${pnginsane+8019}9 --mt-deflate -quiet ${globstrip+-strip} "$tmp.png"  # ect needs correct extension
 				# If the value is above 10000, the blocksplitting-compression cycle is repeated # / 10000 times. If # % 10000 is above 9, level 9 is used and the number of iterations of deflate compression per block is set to # % 10000. If # % 10000 is 9 or below, this number specifies the level.
 				mv "$tmp.png" "$tmp"
