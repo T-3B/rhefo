@@ -299,7 +299,7 @@ compressFile() {	# warning: $1 can be empty
 	tmpname=${tmp##*/}
 
 	# TODO if mime=application/octet-stream, use FFmpeg to try to get the container name (or use a file mapping filextensions to mime-type)
-	case $(file -b --mime-type "$tmp") in  # see here for known MIME types: /usr/share/mime/types
+	case $(file -b --mime-type "$in") in  # see here for known MIME types: /usr/share/mime/types
 		application/gzip | application/x-gzip)	# DONE
 			# tested tools: zopfli, zopfli MrKrzYch00's mod, gzip, 7z, minigzip (from minizip-ng). Tested on all files from silesia.tar (ect is far faster than zopfli(mod), and always gives smaller files - even when file is 1KB; ECT << zopfli < zopfli_mrkrzych00 << gzip); zopfli_mrkrzych00 --i9999 --mui999 --slowfix --t0 --pass9 --all androidsdk.svg
 			p=$(gzip -Nl "$in")
