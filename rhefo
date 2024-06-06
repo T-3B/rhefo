@@ -232,7 +232,7 @@ parseArgs() {  # not using `local` vars because this fct is only exectued once
 		info "$(printf "Congrats! Processed %d files in %s and saved %sB (%.3f%%)!\a" $3 $( ((h)) && printf ${h}h; ((m)) && printf ${m}m)${s}s $(numfmt --to=iec-i --format="%.2f" $1) $((1000000*$1/($2?$2:1)))e-4)"
 		rm -r "$globstatsfile" "$addinsDir" "$TMPDIR"
 	} &  # all the code is done in background so it won't be killed by Ctrl+C
-	until wait; do :; done  # each Ctrl+C will kill `wait` (1st hit: no new job, 2nd: kill parallel)
+	until wait; do :; done  # each Ctrl+C will kill `wait` (1st hit: no new job, 2nd: kill parallel)  # TODO remove --bar from parallel and print stuff ourself (including saved bytes/%)
 }
 
 # $1 = folder where to extract all the add-ins
@@ -294,7 +294,12 @@ compressFile() {	# warning: $1 can be empty
 	[ $3 ] && local inParent=$in
 	[[ $3 && -v globoutput ]] && out=$globoutput/${2##*/}${1:+/$1}
 	[[ $3 && -v globprefix ]] && out=${out%/*}/$globprefix${out##*/}
-	[[ $3 && (-v globoutput || -v globprefix) && ! -v globupdate && -e "$out" ]] && { warning "'$out' already exists, file not compressed nor updated. Rerun with -y to overwrite files in output directory, or with -p to add a prefix.";rm -f "$tmp";return;}
+	if [[ $3 && (-v globoutput || -v globprefix) && ! -v globupdate && -e "$out" ]]
+	then warning "'$out' already exists, file not compressed nor updated." 'Rerun with -y to overwrite files in output directory, or with -p to add a prefix.'
+		cd /
+		rm -r "${tmp%/*}"
+		return
+	fi
 	size=${3-$(wc -c <"$tmp")}
 	tmpname=${tmp##*/}
 
@@ -492,14 +497,19 @@ compressFile() {	# warning: $1 can be empty
 		*)
 			# application/x-executable (TODO test if this MIME type is the only one for executables)
 			#upx -9 --ultra-brute -o out in
-			;;
+			cp "$in" "$tmp";;  # TODO also cp in -> tmp IF THERE IS ANY ERROR (what about set -e or something like that?)
 	esac
 	(((size-=$(wc -c <"$tmp"))<=0)) && { info "'$in'$([ $3 ] || echo " (embedded file from '$inParent')"): could not compress further. Input file was kept."; cp "$in" "$tmp"; size=0;}
 	chmod $umask "$tmp"
 	[ -v globkeeptime ] && touch -md"$mtime" "$tmp" && touch -ad"$atime" "$tmp"
 	if [ $3 ]
 	then sem --fg --id "$globstatsfile" 'set -- $(<"$globstatsfile"); printf "$(('$size'+$1))\n$(('$3'+$2))\n$((1+$3))\n" >"$globstatsfile"'  # use a semaphore to allow only one thread to write stats at a time
-		[[ -v globoutput && ! -v globupdate && -e "$out" ]] && { warning "'$out' already exists, not updated. Compressed version here: '$tmp'." 'Rerun with -y to overwrite files in output directory, or with -p to add a prefix.';} || { mv "$tmp" "$out"; chown -f --reference="$in" "$out"; chmod -f --reference="$in" "$out";}
+		if [[ -v globoutput && ! -v globupdate && -e "$out" ]]
+		then warning "'$out' already exists, not updated. Compressed version here: '$tmp'." 'Rerun with -y to overwrite files in output directory, or with -p to add a prefix.'
+		else mv "$tmp" "$out"
+			chown -f --reference="$in" "$out"
+			chmod -f --reference="$in" "$out"
+		fi
 	else mv "$tmp" "$out"
 	fi
 	cd /
