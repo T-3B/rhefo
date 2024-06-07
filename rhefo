@@ -283,7 +283,7 @@ compressFile() {	# warning: $1 can be empty
 	[[ ! $3 && -v globnoextract ]] && return  # if this is a subcall compressFile and globnoextract is set, then do not optimize this file (as it's an embedded one)
 	set -a  # export everything automaticall (e.g. sub-parallel calls)
 	local a p v  # variables for temporary/intermediate values, ONLY SET THEM IN THE CASE SWITCH
-	local atime mtime umask size in=$2${1:+/$1} tmp tmpname out
+	local atime mtime umask size in=$2${1:+${2:+/}}$1 tmp tmpname out
 	atime=$(stat -c%x "$in")
 	mtime=$(stat -c%y "$in")
 	umask=$(stat -c%a "$in")
@@ -441,18 +441,18 @@ compressFile() {	# warning: $1 can be empty
 			# gifsicle -o 1"$i" -O3 --no-comments --no-extensions --no-app-extensions --no-names input.gif
 			;;
 		image/jpeg)
-			# tested ECT, jpegoptim, jpegtran, jpegultrascan.pl; JPG optimize benchmark: https://encode.su/threads/3987-Jpeg-Optimizer-testing
-			
+			# tested jpegtran ect leanify pingo jpegoptim curtail jpgcrush jhead jpegultrascan.pl; JPG optimizer benchmark: https://encode.su/threads/3987-Jpeg-Optimizer-testing
+
 			# TODO for Exif editing: if $globstrip, remove everything except these to be completely lossless:
 			# - ColorSpace, InteropIndex, ICC_Profile, Orientation; maybe others ? See https://exiftool.org/TagNames/EXIF.html
 			# Try to `jpegtran -rotate x -perfect -outfile out.jpg in.jpg` with rotation written in Exif (WARNING may also be mirrored), will exit with $?=1 if not lossless transformation  (CHECK ALSO `ect -autorotate`)
 			# TODO add -arithmetic coding with $jpgbroken
 			# TODO jpegultrascan: always use -i (sometimes smaller output, but never bigger); maybe try -o 'jpegtran -revert' to know if the errors I got with recompressing wallpapers (too many scans) are solved with that (try also for other files)
 			# -b3 is really rarely beaten by high numbers
-			
+
 			# TODOOOOOOOOOOOOOOOOO copy icc will drop the rotation of the image!!!!!!!!!!!!!!!!!!!!!!
 			# TODO in average, ect -progressive gives smaller files than jpegtran (use `-9` because presets >= 5 have different behavior than smaller ones)
-			
+
 			# TODO `jhead -du` Or -purejpg which is a combination of params including -du; this command allowed Fox Wizard to beat me again (6 bytes smaller - metadata - than `ultrascan -b 13 -t 16 -a -i -s` !arithmetic!, ECT nor jpegtran could remove these 6 bytes)
 			jpegtran -copy all -outfile "$tmp" "$in" && ect -9 -progressive -quiet ${globstrip+-strip} "$tmp";;
 		image/jxl)
@@ -460,21 +460,20 @@ compressFile() {	# warning: $1 can be empty
 			# cjxl -e 9 -d 0 --brotli_effort=11 -I 100 -g 3 -E 11
 			# bruteforcing some settings will compress better (-g 1..3, --patches, ...): https://github.com/libjxl/libjxl/issues/426#issuecomment-898962219
 			# -e 10 will actually really bruteforce everything/every flag, no need for more than `-e 10 --allow_expert_options` (if cjxl uses more than 1 thread, no impact on the size) (more args is completely useless)
-			
+
 			# strip = '--container=0 --jpeg_store_metadata=0' and perhaps more
 			# `-x strip=exif` was added fairly recently, might work with `-x strip=all` but not sure, could try exif and xmp at the same time too
 			# code stripping container : https://github.com/Fraetor/jxl_decode/blob/main/src/jxl-strip.py
-			
+
 			# jxlinfo prints 'JPEG bitstream reconstruction data available', perhaps with glob-lossy remove that reconstruction (if does not degrade JXL quality - I guess it only change jpg reconstruction)
-			
+
 			#upscaled pixel art is very hard to beat.
 			#You resize the art back down to 1:1 pixels, then with lossless you add
 			#--already_downsampled --resampling=(2, 4 or 8, whichever is closest to the original) --upsampling_mode=0
-			
+
 			# JXL max effort is now 11 with allow_expert_options, 10 otherwise
 
 			# For JPG lossless recompression, JXL does not *ALWAYS* output smaller file if input JPG is smaller (to "inflate" the JPG file, use `jpegtran -revert`
-
 			;;
 		image/png | image/x-png | image/vnd.mozilla.apng)
 			# Tested software: ECT, leanify, zopflipng_mrkrzych00; zopflipng_mrkrzych00 -y -m --iterations=999 --slowfix --all --lossy_transparent --alpha_cleaners=bhvapw --pass=999 in out
