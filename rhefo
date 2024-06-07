@@ -300,7 +300,7 @@ compressFile() {	# warning: $1 can be empty
 		rm -r "${tmp%/*}"
 		return
 	fi
-	size=${3-$(wc -c <"$tmp")}
+	size=${3-$(wc -c <"$in")}
 	tmpname=${tmp##*/}
 
 	# TODO if mime=application/octet-stream, use FFmpeg to try to get the container name (or use a file mapping filextensions to mime-type)
