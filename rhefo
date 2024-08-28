@@ -48,6 +48,13 @@
 # TODO what about how lossy and strip works ?
 # do something like --<postfix>-strip where <postfix> is the last part of the filename (perhaps better if prefix of mimetype)
 # do same hing about -insane
+# TODO do the same thing for mask, like have a --<postfix>-ignore that won't do anything, and another one to simply copy from $in to $out
+
+# TODO add warning if file changed between rhefo start and file opt
+
+# TODO add progress to window title
+
+# TODO supprt stdin instead of xargs (as show in long help examples)
 
 set -a  # export var+fct automatically
 set -m  # All processes run in a separate process group (needed for Ctrl+C "trick")
@@ -122,16 +129,16 @@ List of options (global ones first, then grouped by file type):
 --flac-subset		worse compression, faster
   if set, use subset mode (HW decode guaranteed); default: non-subset
 --gzip-insane		better compression, far slower (TODO benchmark)
-  if set, use 99999 iterations; default: 9
+  if set, use 80199 iterations; default: 9
 --gzip-lossy		better compression, lossy
   if set, do not store the original decompressed filename
   default is to store it only if archive is not `originalName.gz`
 --mp3-lossy		better compression (208 bytes less), lossy
   if set, do not write a Xing frame; some softwares will show a wrong duration
 --png-insane		better compression, far slower (TODO benchmark)
-  if set, use 99999 iterations; default: 9 (PNG), 99 (APNG)
+  if set, use 80199 iterations; default: 9 (PNG), 99 (APNG)
 --zip-insane		better compression, far slower (TODO benchmark)
-  if set, use 99999 iterations; default: 9
+  if set, use 80199 iterations; default: 9
 --zip-nodeflate		better compression, slower, compatibility
   if set, do not use only Deflate but also Deflate64,LZMA,PPMd,BZip2,Zstd,XZ
   default is to only use Deflate if input has only Deflate streams
@@ -222,7 +229,10 @@ parseArgs() {  # not using `local` vars because this fct is only exectued once
 	# get absolute path, find all files (print size, filepath, input folderpath), sort (biggest size first), compress in parallel
 	{
 		# TODO parallel --memsuspend
-		realpath -z -- "$@" | xargs -0I{} find {} -type f ${globfilemask+-name "$globfilemask"} -printf '%s\0%P\0%H\0' | { [ -v globnosort ] && cat || sortFilesBySize;} | parallel -j${globjobs-100%} -0L3 --lb --bar compressFile {2} {3} {1} 1
+		# TODO parallel --noswap
+		# TODO parallel --load to not start job if current cpu load is above x
+		# TODO parallel --delay (makes sense to use only with --load)
+		realpath -z -- "$@" | parallel --xargs -q0 find {} -type f ${globfilemask+-name "$globfilemask"} -printf '%s\0%P\0%H\0' | { [ -v globnosort ] && cat || sortFilesBySize;} | parallel -j${globjobs-100%} -0L3 --lb --bar compressFile {2} {3} {1}
 		# Thanks for the people helping me finding a way to sort by filesize (sorting by group of 3 elements): https://stackoverflow.com/a/76028193/13227011
 		# TODO don't compressFile duplicates (explicitly twice same input or implicitely - with the file and the parent folder)
 		# TODO test with filenames having $@-*
@@ -278,12 +288,13 @@ catchSmallestFile() {
 	rm -f "$@"  # -f to not print err msg, since there's a missing file ("$a") 
 }
 
+# TODOOOOOOOOOOOOOOOO instead of no $3 if this is a subcall, use $SHLVL !!!!!!!!!!!!!!
 # $1=filepath	$2=prefixpath	$3=filesize		("$2/$1" = full absolute input path)	(do NOT set $3 when this is a subcall from another compressFile - e.g. when compressFile a file from an extracted ZIP file); none can have spaces
 compressFile() {	# warning: $1 can be empty
 	[[ ! $3 && -v globnoextract ]] && return  # if this is a subcall compressFile and globnoextract is set, then do not optimize this file (as it's an embedded one)
 	set -a  # export everything automaticall (e.g. sub-parallel calls)
 	local a p v  # variables for temporary/intermediate values, ONLY SET THEM IN THE CASE SWITCH
-	local atime mtime umask size in=$2${1:+${2:+/}}$1 tmp tmpname out
+	local atime mtime umask size in=$2${1:+${2:+/}}$1 tmp out
 	atime=$(stat -c%x "$in")
 	mtime=$(stat -c%y "$in")
 	umask=$(stat -c%a "$in")
@@ -301,7 +312,6 @@ compressFile() {	# warning: $1 can be empty
 		return
 	fi
 	size=${3-$(wc -c <"$in")}
-	tmpname=${tmp##*/}
 
 	# TODO if mime=application/octet-stream, use FFmpeg to try to get the container name (or use a file mapping filextensions to mime-type)
 	case $(file -b --mime-type "$in") in  # see here for known MIME types: /usr/share/mime/types
@@ -311,12 +321,14 @@ compressFile() {	# warning: $1 can be empty
 			p=${p##*/}  # p= original decomp filename
 			gzip -dc "$in" >"${tmp%.*}"
 			compressFile "${tmp%.*}"
-			gzip -1c$([[ -v gziplossy || "$p.gz" = "$tmpname" ]] && echo n) "${tmp%.*}" >"$tmp"
+			gzip -1c$([[ -v gziplossy || "$p.gz" = "${tmp##*/}" ]] && echo n) "${tmp%.*}" >"$tmp"
 			rm "${tmp%.*}"
-			ect -9${gzipinsane+9999} --mt-deflate -gzip --strict -quiet "$tmp";;  # using strict won't recompress embedded file
+			ect -${gzipinsane+8019}9 --mt-deflate -gzip --strict -quiet "$tmp";;  # using strict won't recompress embedded file
 		application/pdf)  # TODO there is also `mutool extract`;	for lossless recompression check, see `mutool draw` (converts pdf to vector graphics)
 			# TODO: best combination: cpdf -> pdfsizeopt -> mutool clean -> qpdf
-			# Warning I don't think it's always the same order giving smallest file
+			# TODO but another test: qpdf -> mutool -> pdfsizeopt
+			# Warning it's not always the same order giving smallest file
+			# cpdf: -remove-metadata -remove-duplicate-fonts
 			mutool clean -gggg "$in" "$tmp"  # at least clean once
 			p=$(wc -c <"$tmp")
 			while v=$p; mutool clean -gggg "$tmp" "$tmp"; p=$(wc -c <"$tmp"); ((p<v)); do :; done  # repeat, until size stops decreasing, "garbage collect objects/streams + merge/reuse duplicates + compact cross ref table"; I saw a file that needed 7 iterations
@@ -357,11 +369,11 @@ compressFile() {	# warning: $1 can be empty
 			then : # TODO
 			else  # even if `zip -9` only uses 100% cpu, compressed 2.2GB with 660 files in 67 seconds (fast enough). Could take less (but more mem) time by compressing each file in its own zip, ect all of them in parallel (because ect takes each file in the archive one after the other), then merge them (using zipmerge from libzip)
 				cd "$v"
-				find . -type d -empty -print0 | xargs -r0 zip -q "$tmp"
-				zip -9rDq "$tmp" .  # -D to not add dirs; -9 forces everything > ~64 bytes to be compressed with Deflate (even if output is bigger) - useful as ect will NOT compress uncompressed files (and if Deflate stream is bigger than input data, ect will store the file uncompressed)
+				zip -9rDq - . >"$tmp"  # -D to not add dirs; -9 forces everything > ~64 bytes to be compressed with Deflate (even if output is bigger) - useful as ect will NOT compress uncompressed files (and if Deflate stream is bigger than input data, ect will store the file uncompressed)
+				find . -type d -empty -print0 | parallel --xargs -0 zip -q "$tmp"
 				cd - >/dev/null
 				rm -r "$v"
-				ect -9${zipinsane+9999} -quiet -zip --strict --mt-deflate "$tmp"  # using --strict makes sure ECT does not try to optimize archived files (so it will only optimize Deflate compression in ZIP, not embedded files themselves)
+				ect -${zipinsane+8019}9 -quiet -zip --strict --mt-deflate "$tmp"  # using --strict makes sure ECT does not try to optimize archived files (so it will only optimize Deflate compression in ZIP, not embedded files themselves)
 			fi
 			# TODO for apk, do not extract to optimize inside (would require apk-resigner - AUR; + zipalign; + some uncompressed files should stay uncompressed https://stackoverflow.com/q/25425172/13227011)
 
@@ -480,10 +492,12 @@ compressFile() {	# warning: $1 can be empty
 			# ECT is the best Deflate encoder (looking at compression ratio only), so the only way to beat it is to bruteforce even more filters than `ect --allfilters-b --pal_sort=120` (not using this as it takes ages), but then if we find a better filter we could run ect on it and it will reuse the filter if gives better ratio
 			# TODO can apngopt sometimes do lossy things (iirc it will change the pixels to rgba(pc)) ?
 			# TODO remove useless alpha channel
+			# TODO pngout apparently can sometimes do better: Just running pngout followed by pngout /f0 will result in the optimal compression; set the size manually can help Low entropy = High values, High entropy = Small values
+			# TODO see (or better version than) optipng -fix -f 5 -i 0 -zc 9 -zm 9 -zs 0-3 -zw 32k -nb -nc -np -nx "$file"
 			if [ $(ffprobe -v warning -show_entries stream=codec_name -of default=nk=1:nw=1 "$in") = apng ]
 			then # ect -1 ${globstrip+-strip} "$tmp"  # TODO (cannot strip using ECT since it drops all other frames - only 1st one is kept)
 				apngopt -z2 -i99${pnginsane+999} "$in" "$tmp" >/dev/null  # TODO to do better, we could split frames, use ECT --reuse, them remux   ;; TODO try pingo
-			else cp "$in" "$tmp.png"
+			else cp "$in" "$tmp.png"  # TODO might get better compression with pngOUT (first run pngout without options and then pngout /f0)
 				ect -${pnginsane+8019}9 --mt-deflate -quiet ${globstrip+-strip} "$tmp.png"  # ect needs correct extension
 				# If the value is above 10000, the blocksplitting-compression cycle is repeated # / 10000 times. If # % 10000 is above 9, level 9 is used and the number of iterations of deflate compression per block is set to # % 10000. If # % 10000 is 9 or below, this number specifies the level.
 				mv "$tmp.png" "$tmp"
