@@ -225,7 +225,7 @@ parseArgs() {  # not using `local` vars because this fct is only exectued once
 	extractAddins "$addinsDir"
 
 	# create all the dir-tree to output folder
-	[ -v globoutput ] && { for i do [ -d "$i" ] && ([ "${globoutput#$(realpath "$i")}" = "$globoutput" ] || error "The --glob-output folder can't be inside an input folder."; cd -- "$i"; find . -type d -exec mkdir -p "$globoutput/$(basename "$(realpath "$i")")/{}" \;); done;}
+	[ -v globoutput ] && { for i do [ -d "$i" ] && { [ "${globoutput#$(realpath "$i")}" = "$globoutput" ] || error "The --glob-output folder can't be inside an input folder."; cd -- "$i"; find . -type d -exec mkdir -p "$globoutput/$(basename "$(realpath "$i")")/{}" \;; cd - >/dev/null;}; done;}
 	# get absolute path, find all files (print size, filepath, input folderpath), sort (biggest size first), compress in parallel
 	{
 		# TODO parallel --memsuspend
@@ -383,11 +383,10 @@ compressFile() {	# warning: $1 can be empty
 			;;
 		audio/flac | audio/x-flac)  # Tested softwares (with different genres, 44.1 and 96 kHz, 16 and 24-bit, stereo): fork of reference FLAC 1.4.2 encoder https://github.com/ktmf01/flac; FLACOut.exe; CUETools.Flake.exe 2.2.2 --vbr 3 -11 -P 0 --lax --no-seektable -r 8 -e 32 -l 32 (tested different --window-method, -w, --vbr <0..4>, and did beat reference FLAC encoder *only* if I did *not* try -A functions); justinruggles' Flake
 			# Note on FLAC compression: I made several benchmarks (10 encodes with different settings for 40 wav - PCM s16 44.1 kHz - files).
-			# Don't "bruteforce" apodizations functions. From the results, it is far better to use only `subdivide_tukey', and the more the number given to it, the better the compression.
-			# If trying multiple apodization functions, there are 2 cons: it takes longer because FLAC will estimates them all, and it can *increase* the output filesize because apodization fcts are *estimated* (and order matters).
-			# For easy copy-paste, here is a command using 32 apodization fcts (the max allowed). Did not check if order was "optimal". Nearly the same size as only using `subdivide_tukey(40)' (by ~0.01%), but taking 1.7x longer. Therefore if better compression ratio is needed I recommend only increasing the value given to `subdivide_tukey'.
-			#flac in.flac -o out.flac -A subdivide_tukey\(5\) -A subdivide_tukey\(10\) -A subdivide_tukey\(15\) -A subdivide_tukey\(20\) -A subdivide_tukey\(25\) -A subdivide_tukey\(30\) -A gauss\(0.1\) -A tukey\(10\) -A tukey\(15\) -A tukey\(20\) -A tukey\(25\) -A partial_tukey\(10\) -A partial_tukey\(15\) -A partial_tukey\(20\) -A partial_tukey\(25\) -A punchout_tukey\(10\) -A punchout_tukey\(15\) -A punchout_tukey\(20\) -A punchout_tukey\(25\) -A welch -A bartlett -A bartlett_hann -A blackman -A blackman_harris_4term_92db -A connes -A flattop -A hamming -A hann -A kaiser_bessel -A nuttall -A rectangle -A triangle -8epP 0 --no-seektable -r 15 -l 32 --lax
+			# For easy copy-paste, here is a command. Nearly the same size as only using `subdivide_tukey(40)' (by ~0.01%), but taking 1.7x longer. Therefore if better compression ratio is needed I recommend only increasing the value given to `subdivide_tukey'.
+			#flac in.flac -o out.flac -A subdivide_tukey\(25\) -A gauss\(0.1\) -A tukey\(25\) -A partial_tukey\(25\) -A punchout_tukey\(25\) -A welch -A bartlett -A bartlett_hann -A blackman -A blackman_harris_4term_92db -A connes -A flattop -A hamming -A hann -A kaiser_bessel -A nuttall -A rectangle -A triangle -8epP 0 --no-seektable -r 15 -l 32 --lax
 			#subdivide_tukey(5);gauss(0.1);tukey(5);partial_tukey(5);punchout_tukey(5);welch;bartlett;bartlett_hann;blackman;blackman_harris_4term_92db;connes;flattop;hamming;hann;kaiser_bessel;nuttall;rectangle;triangle
+			#flaccid --in liberate.flac --lax --out liberate_VarSizeBruteForced.flac --peakset-window 48 --preserve-flac-metadata --queue 8192 --workers 16 --tweak 1 --merge 0 --analysis-apod 'subdivide_tukey(5);gauss(0.1);tukey(5);partial_tukey(5);punchout_tukey(5);welch;bartlett;bartlett_hann;blackman;blackman_harris_4term_92db;connes;flattop;hamming;hann;kaiser_bessel;nuttall;rectangle;triangle' --output-apod 'subdivide_tukey(5);gauss(0.1);tukey(5);partial_tukey(5);punchout_tukey(5);welch;bartlett;bartlett_hann;blackman;blackman_harris_4term_92db;connes;flattop;hamming;hann;kaiser_bessel;nuttall;rectangle;triangle' --analysis-comp mepl32r15 --output-comp mepl32r15 --mode peakset --blocksize-list 512,1024,1536,2048,2560,3072,3584,4096,4608
 
 			# TODO detect and compress if mono was encoded as stereo
 			# TODO flac can be in ogg/oga!
