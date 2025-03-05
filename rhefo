@@ -21,8 +21,6 @@
 # formats (mime-types) which are completely finished and supported are marked 'DONE'
 
 
-# TODO parallel: Error: $PWD can only contain [-a-z0-9_+,.%@:/= ].
-
 # TODO begin each section in case switch with a test (like some outputs of PDFs can be empty bc input is not supported or broken)
 # also , still process if detected to have input problem, and say to user: warning, check this file (if not good, the backup is here ..)
 
@@ -240,7 +238,7 @@ parseArgs() {  # not using `local` vars because this fct is only exectued once
 		# TODO parallel --noswap
 		# TODO parallel --load to not start job if current cpu load is above x
 		# TODO parallel --delay (makes sense to use only with --load)
-		realpath -z -- "$@" | parallel --xargs -q0 find {} -type f ${globfilemask+-name "$globfilemask"} -printf '%s\0%P\0%H\0' | { [ -v globnosort ] && cat || sortFilesBySize;} | parallel -j${globjobs-100%} -0L3 --lb --bar compressFile {2} {3} {1}
+		realpath -z -- "$@" | { cd /; parallel --xargs -q0 find {} -type f ${globfilemask+-name "$globfilemask"} -printf '%s\0%P\0%H\0' | { [ -v globnosort ] && cat || sortFilesBySize;} | parallel -j${globjobs-100%} -0L3 --lb --bar compressFile {2} {3} {1}; cd - >/dev/null;}
 		# Thanks for the people helping me finding a way to sort by filesize (sorting by group of 3 elements): https://stackoverflow.com/a/76028193/13227011
 		# TODO don't compressFile duplicates (explicitly twice same input or implicitely - with the file and the parent folder)
 		# TODO test with filenames having $@-*
@@ -306,7 +304,7 @@ compressFile() {	# warning: $1 can be empty
 	atime=$(stat -c%x "$in")
 	mtime=$(stat -c%y "$in")
 	umask=$(stat -c%a "$in")
-	cd "$(mktemp --tmpdir -d XXX)"  # keep every compressFile isolated from other threads, allows us to use "$tmp" with an additional filextension, or with one less, without worry
+	cd "$(mktemp --tmpdir -d XXX)"  # keep every compressFile isolated from other threads, allows us to use "$tmp" with an additional filextension, or with some chars less, without worrying
 	tmp=$(mktemp -p"$PWD" --suff=."${in##*/}" XXX)  # always use tmp, so in!=tmp
 	#TODO check if $TMPDIR has enough free mem
 	out=$in
