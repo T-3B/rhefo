@@ -21,6 +21,14 @@
 # formats (mime-types) which are completely finished and supported are marked 'DONE'
 
 
+# TODO parallel: Error: $PWD can only contain [-a-z0-9_+,.%@:/= ].
+
+# TODO begin each section in case switch with a test (like some outputs of PDFs can be empty bc input is not supported or broken)
+# also , still process if detected to have input problem, and say to user: warning, check this file (if not good, the backup is here ..)
+
+# TODO some CLIs take all available threads (like ect), so write a function to reserve the threads for them with a semaphore with max value = glob_threads.
+# useful for processing hundreds of PNGs (so less context switching and this is the best way to get outputs as fast as possible - if rhefo crash, we lost less work, as one file is processed at a time)
+
 # TODO allow to stop and resume; using parallel --jl parallel.log --resume AND/OR criu (note that criu doesn't work on all kernels - and apparently needs setsid); take into account big ZIP optimization (many recursive calls of compressFile)
 
 # TODO depending on whether we have lots of input files or not, run single-threaded jobs in parallel or a few jobs each taking multiple threads respectively (jpegultrascan -t x; ...). "input files < #threads" ?
@@ -215,7 +223,9 @@ parseArgs() {  # not using `local` vars because this fct is only exectued once
 	done
 	(($#)) || error 'No input given. See the help message `rhefo -h`.'
 	for i do [ -r "$i" ] || error "Input '$i' does not exist or cannot read it."; done
-	
+
+	# create all the dir-tree to output folder
+	[ -v globoutput ] && { for i do [ -d "$i" ] && { [ "${globoutput#$(realpath "$i")}" = "$globoutput" ] || error "The --glob-output folder can't be inside an input folder."; cd -- "$i"; find . -type d -exec mkdir -p "$globoutput/$(basename "$(realpath "$i")")/{}" \;; cd - >/dev/null;}; done;}
 	TMPDIR=$(mktemp --tmpdir -d rhefo_${version}_tmpXXX)
 
 	printf '0\n0\n0\n' >"${globstatsfile=$(mktemp --tmpdir XXX)}"  # file where stats are wrote - to allow edit in subshells since we use `parallel`; 1st line is saved bytes, 2nd is input files size, 3rd is nbr input files
@@ -224,8 +234,6 @@ parseArgs() {  # not using `local` vars because this fct is only exectued once
 	PATH=$addinsDir:$PATH
 	extractAddins "$addinsDir"
 
-	# create all the dir-tree to output folder
-	[ -v globoutput ] && { for i do [ -d "$i" ] && { [ "${globoutput#$(realpath "$i")}" = "$globoutput" ] || error "The --glob-output folder can't be inside an input folder."; cd -- "$i"; find . -type d -exec mkdir -p "$globoutput/$(basename "$(realpath "$i")")/{}" \;; cd - >/dev/null;}; done;}
 	# get absolute path, find all files (print size, filepath, input folderpath), sort (biggest size first), compress in parallel
 	{
 		# TODO parallel --memsuspend
@@ -392,7 +400,7 @@ compressFile() {	# warning: $1 can be empty
 			# TODO flac can be in ogg/oga!
 			# TODO Ogg only supports Opus, Vorbis, FLAC, A-law PCM, μ-law PCM, IEEE floating-point PCM, Speex and CELT.[e] OGMtools supports MP3 and AC-3 in Ogg.
 			# TODO bruteforce blocksize (the size providing best ratio - mean - is 4096 with actual flags)
-			
+
 			# Warning! Do not use ffmpeg as it merges all tags with the same key within a single tag (with ';' as a separator).
 			cp "$in" "$tmp"
 			if ! [ -v globstrip ]
@@ -421,7 +429,7 @@ compressFile() {	# warning: $1 can be empty
 				fi
 			fi
 			[ -v a ] && { wait; for p in $a; do metaflac --append "$tmp" <"$tmp".$p.blockNew; rm "$tmp".$p.blockNew; done;}  # we add PICTUREs back to the FLAC file
-			metaflac --remove --block-type=PADDING --dont-use-padding "$tmp";;  
+			metaflac --remove --block-type=PADDING --dont-use-padding "$tmp";;
 		audio/mpeg | audio/mp3 | audio/mpeg3 | audio/x-mpeg-3)
 			# TODO detect and compress if mono was encoded as stereo
 			# MP3Packer will write "mp3packer2.04-268\n" in the needed *padding* of frames, removing them break the file (as they're needed). We could remove the padding only at the COMPLETELY end of file, even if FFmpeg decode it fine (and same checksum), some softwares will report an error (and if after removing the padding we reuse MP3Packer on it, boom the checksum does not match anymore!!!)
@@ -435,7 +443,7 @@ compressFile() {	# warning: $1 can be empty
 			ffmpeg -v error -i "$tmp" -map 0 -c copy -fflags +bitexact -write_xing 0 -metadata_header_padding 10 "$tmp.mp3"  # FFmpeg 6.0 will ALWAYS write at least 10 bytes of padding (even if no ID3 metadata), so I use 10 padding too to prevent unpleasant surprise in the future
 			echo AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 			if [ -v globstrip ]
-			then mp3packer -s -t -f "$tmp.mp3" "$tmp"  >/dev/null  # remove everything that's not the MP3 stream itself
+			then mp3packer -s -t -f "$tmp.mp3" "$tmp"  >/dev/null  # remove everything that's not the MP3 stream itself  # TODO still does not remove side metadata (see file)
 			elif ((v=(0x$(getBytes "$tmp.mp3" 6)<<21|0x$(getBytes "$tmp.mp3" 7)<<14|0x$(getBytes "$tmp.mp3" 8)<<7|0x$(getBytes "$tmp.mp3" 9))-10))  # Easier to do the test after 1st ffmpeg command: if ID3 length is not 10 then trim, otherwise remove completely ID3 (since there is only padding).
 			then echo MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
 				{ dd status=none bs=6 count=1 iflag=fullblock; printf $(printf '\\x%x' $((v>>21)) $((v>>14&127)) $((v>>7&127)) $((v&127))); dd status=none bs=$v count=1 iflag=fullblock iflag=skip_bytes skip=4; dd status=none bs=4k iflag=fullblock iflag=skip_bytes skip=10;} <"$tmp.mp3" >"$tmp"  # will remove the 10 bytes padding; ID3v2 length is big-endian
@@ -537,7 +545,7 @@ info() { printf "\r\033[1;36mI: %s\033[0m\n" "$@";}
 
 warning() { printf "\r\033[1;33mW: %s\033[0m\n" "$@" >&2;}
 
-error() {
+error() {  # TODO change this to have exit code as first argument (so we could simply use shift)
 	if [[ ${@: -1} = +([0-9]) ]]  # check if last arg is a number (== exit code)
 	then printf "\r\033[1;31mE: %s\033[0m\n" "${@:1:$#-1}" >&2; exit ${@: -1}
 	else printf "\r\033[1;31mE: %s\033[0m\n" "$@" >&2; exit 1
@@ -559,9 +567,9 @@ ctrlCHandler() {
 }
 
 # Set up the Ctrl+C signal handler
-trap 'ctrlCHandler' INT
+trap ctrlCHandler INT
 
-(($#)) && parseArgs "$@" || parseArgs -h
+parseArgs "${@--h}"
 
 
 exit
