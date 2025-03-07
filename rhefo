@@ -101,7 +101,7 @@ List of options (global ones first, then grouped by file type):
   more jobs mean more RAM usage, no impact on output filesize
 --glob-keeptime | -k
   if set, input access and modification times are kept
---glob-lossy | -l	better compression, lossy
+--glob-lossy | -l	better compression, metalossy
   if set, all lossy flags are set (except the more agressive --glob-strip)
   lossy flags *only* act on metadata; most of time they remove what
     is not really needed (such as the version of FLAC encoder)
@@ -114,7 +114,7 @@ List of options (global ones first, then grouped by file type):
   even if set, --glob-tmp is still used
 --glob-prefix=<prefix> | -p <prefix>
   Prefix to add to all processed files (--glob-output can still be used)
---glob-strip | -s	better compression, lossy
+--glob-strip | -s	better compression, metalossy
   if set, strip/remove ALL metadata/exif; see the less aggressive --glob-lossy
 --glob-threads=<N> | -t<N>
   <N> logic cpu processors used by this script; default: all (see --glob-jobs)
@@ -126,7 +126,7 @@ List of options (global ones first, then grouped by file type):
   if set, will overwrite files in --glob-output
 --flac-insane		better compression (~0.1% save), far slower (~200x)
   if set, run FLAC with the apodization function `subdivide_tukey(40)`
---flac-lossy		better compression, lossy
+--flac-lossy		better compression, metalossy
   if set, vendor string from VORBIS_COMMENT is removed
     all blocks except VORBIS_COMMENT & PICTURE are removed (seektable,...)
     if there are no tags, then VORBIS_COMMENT block is removed too
@@ -136,16 +136,16 @@ List of options (global ones first, then grouped by file type):
   if set, use subset mode (HW decode guaranteed); default: non-subset
 --gzip-insane		better compression, far slower (TODO benchmark)
   if set, use 80199 iterations; default: 9
---gzip-lossy		better compression, lossy
+--gzip-lossy		better compression, metalossy
   if set, do not store the original decompressed filename
   default is to store it only if archive is not `originalName.gz`
---mp3-lossy		better compression (208 bytes less), lossy
+--mp3-lossy		better compression (208 bytes less), metalossy
   if set, do not write a Xing frame; some softwares will show a wrong duration
 --png-insane		better compression, far slower (TODO benchmark)
   if set, use 80199 iterations; default: 9 (PNG), 99 (APNG)
 --zip-insane		better compression, far slower (TODO benchmark)
   if set, use 80199 iterations; default: 9
---zip-nodeflate		better compression, slower, compatibility
+--zip-nodeflate		better compression, slower, compatibility issues
   if set, do not use only Deflate but also Deflate64,LZMA,PPMd,BZip2,Zstd,XZ
   default is to only use Deflate if input has only Deflate streams
   warning, many softwares do NOT support other stream but Deflate
@@ -155,7 +155,7 @@ The first Ctrl+C will tell RHEFO to not start any new job and to gently finish
 currently running jobs. The second one will abruptly stop all jobs.
 In both cases, temp files are cleaned and compression summary is printed.
 
-Use `grep` with this help, it is easy! Try `grep -e --flac -e --glob`.
+Use `grep` with this help, it is easy! Try `rhefo | grep -e --flac -e --glob`.
 Want further help/understanding on what/why really is done under the hood? Read
 the comments in this script. You could learn how to compress even more than this
 script will allow you (but you probably will compress 1 KB per minute).
@@ -173,10 +173,10 @@ rhefo -o /outdir -j2 /indir
 rhefo -o /outdir <firstFile> <secondFile>
 # optimize all FLAC files in /indir, recursively and in hidden dirs and
 # output will be copied to /outdir (folders/files tree is recreated from /indir)
-rhefo -o /outdir -m "*.flac" /path/to/dir
+rhefo -o /outdir -m "*.flac" /indir
 # same as above, but flattened (no subdirectories in /outdir)
 find -name "*.flac" -type f -print0 | xargs -0 rhefo -o /outdir' |\
-	GREP_COLORS=mt=\;33 grep --color=always -E '^--[[:alnum:]_-]+|$' | GREP_COLORS=mt=\;36 grep --color=always -P '(?<= \| )-\w|$' | GREP_COLORS=mt=\;32 grep --color=always 'better compression\|$' | GREP_COLORS=mt=\;31 grep --color=always 'worse compression\|$' | GREP_COLORS=mt=1 grep --color=always -P '(?<=, )(lossy|compatibility)|$' | GREP_COLORS=mt=\;35 grep --color=always '^#.*\|$'
+	GREP_COLORS=mt=\;33 grep --color=always -E '^--[[:alnum:]_-]+|$' | GREP_COLORS=mt=\;36 grep --color=always -P '(?<= \| )-\w|$' | GREP_COLORS=mt=\;32 grep --color=always 'better compression\|$' | GREP_COLORS=mt=\;31 grep --color=always 'worse compression\|compatibility issues\|$' | GREP_COLORS=mt=1 grep --color=always -P '(?<=, )metalossy|$' | GREP_COLORS=mt=\;35 grep --color=always '^#.*\|$'
 )
 
 # Will parse arguments, and then start the whole optimization process (if no errors in the arguments)
