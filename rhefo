@@ -88,7 +88,7 @@ INPUT can be folder or file, and several INPUTs can be given.
 List of options (global ones first, then grouped by file type):
 --help | -h
   print help; use `-h` for options summary, `--help` for full help message
---extract-addins | -x
+--extract-addins=<path> | -x <path>
   only extract add-ins embedded in this script to <path> then exit
 --glob-filemask=<mask> | -m <mask>
   only filenames matching the <mask> will be optimized (e.g. "*.mp3")
@@ -139,6 +139,8 @@ List of options (global ones first, then grouped by file type):
 --gzip-lossy		better compression, metalossy
   if set, do not store the original decompressed filename
   default is to store it only if archive is not `originalName.gz`
+--jpeg-insane		better compression, far slower (TODO benchmark)
+  if set, bruteforce scans with both Moz/IJG jpegtran
 --mp3-lossy		better compression (208 bytes less), metalossy
   if set, do not write a Xing frame; some softwares will show a wrong duration
 --png-insane		better compression, far slower (TODO benchmark)
@@ -192,7 +194,7 @@ parseArgs() {  # not using `local` vars because this fct is only exectued once
 			-h)						echo "${help%%$'\n'*}"; echo "$help" | grep '\[;33m'; echo 'Run `rhefo --help` for the full help.'; exit;;
 			--help)					echo "$help"; exit;;
 			-x | --extract-addins)	[[ -d "$2" || -w "$2" ]] || error "Output directory '$2' does not exist or cannot write to it."; extractAddins "$2"; exit;;
-			-9 | --glob-insane)		flacinsane=;gzipinsane=;pnginsane=;zipinsane=;;
+			-9 | --glob-insane)		flacinsane=;gzipinsane=;jpeginsane=;pnginsane=;zipinsane=;;
 			-j | --glob-jobs)		((0<$2)) || error "Wrong jobs int: '$2'."; globjobs=$2; shift;;
 			-k | --glob-keeptime)	globkeeptime=;;
 			-l | --glob-lossy)		gziplossy=;flaclossy=;mp3lossy=;;
@@ -210,6 +212,7 @@ parseArgs() {  # not using `local` vars because this fct is only exectued once
 			--flac-subset)			flacsubset=;;
 			--gzip-insane)			gzipinsane=;;
 			--gzip-lossy)			gziplossy=;;
+			--jpeg-insane)			jpeginsane=;;
 			--mp3-lossy)			mp3lossy=;;
 			--png-insane)			pnginsane=;;
 			--zip-insane)			zipinsane=;;
@@ -224,7 +227,7 @@ parseArgs() {  # not using `local` vars because this fct is only exectued once
 
 	# create all the dir-tree to output folder
 	[ -v globoutput ] && { for i do [ -d "$i" ] && { [ "${globoutput#$(realpath "$i")}" = "$globoutput" ] || error "The --glob-output folder can't be inside an input folder."; cd -- "$i"; find . -type d -exec mkdir -p "$globoutput/$(basename "$(realpath "$i")")/{}" \;; cd - >/dev/null;}; done;}
-	TMPDIR=$(mktemp --tmpdir -d rhefo_${version}_tmpXXX)
+	TMPDIR=$(mktemp --tmpdir -d .rhefo_${version}_tmpXXX)
 
 	printf '0\n0\n0\n' >"${globstatsfile=$(mktemp --tmpdir XXX)}"  # file where stats are wrote - to allow edit in subshells since we use `parallel`; 1st line is saved bytes, 2nd is input files size, 3rd is nbr input files
 
@@ -254,7 +257,6 @@ parseArgs() {  # not using `local` vars because this fct is only exectued once
 # $1 = folder where to extract all the add-ins
 extractAddins() {
 	dd status=none bs=4k iflag=fullblock iflag=skip_bytes skip=$((6+$(grep -bm1 '^#EOF#$' "$(realpath -- "$BASH_SOURCE")" | cut -f1 -d:))) <"$(realpath -- "$BASH_SOURCE")" | base64 -d | tar xC "$1"
-	chmod -R +x "$1"
 }
 
 # restrict this script to use the $1 *least used* CPU processors
@@ -464,14 +466,14 @@ compressFile() {	# warning: $1 can be empty
 			# - ColorSpace, InteropIndex, ICC_Profile, Orientation; maybe others ? See https://exiftool.org/TagNames/EXIF.html
 			# Try to `jpegtran -rotate x -perfect -outfile out.jpg in.jpg` with rotation written in Exif (WARNING may also be mirrored), will exit with $?=1 if not lossless transformation  (CHECK ALSO `ect -autorotate`)
 			# TODO add -arithmetic coding with $jpgbroken
-			# TODO jpegultrascan: always use -i (sometimes smaller output, but never bigger); maybe try -o 'jpegtran -revert' to know if the errors I got with recompressing wallpapers (too many scans) are solved with that (try also for other files)
-			# -b3 is really rarely beaten by high numbers
 
 			# TODOOOOOOOOOOOOOOOOO copy icc will drop the rotation of the image!!!!!!!!!!!!!!!!!!!!!!
-			# TODO in average, ect -progressive gives smaller files than jpegtran (use `-9` because presets >= 5 have different behavior than smaller ones)
 
 			# TODO `jhead -du` Or -purejpg which is a combination of params including -du; this command allowed Fox Wizard to beat me again (6 bytes smaller - metadata - than `ultrascan -b 13 -t 16 -a -i -s` !arithmetic!, ECT nor jpegtran could remove these 6 bytes)
-			jpegtran -copy all -outfile "$tmp" "$in" && ect -9 -progressive -quiet ${globstrip+-strip} "$tmp";;
+			if [ -v jpeginsane ]
+			then jpegultrascan.pl -qib3 ${globstrip+-s} -t$(nproc) -pjpegtran_ijg -ojpegtran_moz "$in" "$tmp"  # -b3 is really rarely beaten by high numbers
+			else jpegtran_moz -copy all -outfile "$tmp" "$in" && ect -9 -progressive -quiet ${globstrip+-strip} "$tmp"
+			fi;;
 		image/jxl)
 			# -e 10 needs libjxl 0.8.0
 			# cjxl -e 9 -d 0 --brotli_effort=11 -I 100 -g 3 -E 11
