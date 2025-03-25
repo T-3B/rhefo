@@ -61,8 +61,6 @@
 
 # TODO add progress to window title
 
-# TODO supprt stdin instead of xargs (as show in long help examples)
-
 set -a  # export var+fct automatically
 set -m  # All processes run in a separate process group (needed for Ctrl+C "trick")
 version=0.0.1
@@ -383,8 +381,9 @@ compressFile() {	# warning: $1 can be empty
 			then : # TODO
 			else  # even if `zip -9` only uses 100% cpu, compressed 2.2GB with 660 files in 67 seconds (fast enough). Could take less (but more mem) time by compressing each file in its own zip, ect all of them in parallel (because ect takes each file in the archive one after the other), then merge them (using zipmerge from libzip)
 				cd "$v"
-				zip -9rDq - . >"$tmp"  # -D to not add dirs; -9 forces everything > ~64 bytes to be compressed with Deflate (even if output is bigger) - useful as ect will NOT compress uncompressed files (and if Deflate stream is bigger than input data, ect will store the file uncompressed)
-				find . -type d -empty -print0 | parallel --xargs -0 zip -q "$tmp"
+				base64 -d >"$tmp" <<<UEsFBgAAAAAAAAAAAAAAAAAAAAAAAA==  # empty zip
+				zip -9rDq "$tmp" . |& grep -v 'zip error: Nothing to do!'  # -D to not add dirs; -9 forces everything > ~64 bytes to be compressed with Deflate (even if output is bigger) - useful as ect will NOT compress uncompressed files (and if Deflate stream is bigger than input data, ect will store the file uncompressed)
+				find . -type d -empty -print0 | xargs -r0 zip -q "$tmp"
 				cd - >/dev/null
 				rm -r "$v"
 				ect -${zipinsane+8019}9 -quiet -zip --strict --mt-deflate "$tmp"  # using --strict makes sure ECT does not try to optimize archived files (so it will only optimize Deflate compression in ZIP, not embedded files themselves)
@@ -545,7 +544,7 @@ compressFile() {	# warning: $1 can be empty
 
 # only one argument, the folder where we extracted the archive contents
 compressTmpFolder() {
-	[ -v globnoextract ] || find "$1" -type f -printf '%s\0%P\0%H\0' | sortFilesBySize | parallel -0L3 --lb compressFile {2} {3}
+	[ -v globnoextract ] || find "$1" -type f -printf '%s\0%P\0%H\0' | sortFilesBySize | parallel -0L3 --lb globkeeptime= compressFile {2} {3}
 }
 
 info() { printf "\r\033[1;36mI: %s\033[0m\n" "$@";}
