@@ -85,7 +85,7 @@ Extension|Deps|Behaviour|*Default*/insane&nbsp;speed
 `.gz` `.tgz` `.svgz`|`gzip`|Uses [ECT](https://github.com/fhanau/Efficient-Compression-Tool), extract+optimize+remux, remove/*keep* original filename, *normal*/insane encoding time.|N/A
 `.jpg` `.jpeg`|-|Uses [MozJPEG's `jpegtran`](https://github.com/mozilla/mozjpeg), [IJG's `jpegtran`](https://www.ijg.org), [ECT](https://github.com/fhanau/Efficient-Compression-Tool), [JpegUltraScan](https://github.com/MegaByte/jpegultrascan), remove/*keep* metadata (EXIF, ...), *normal*/insane encoding time.
 `.mp3`|-|Uses [MP3Packer](https://hydrogenaud.io/index.php/topic,32379.0.html), extract+optimize+remux embedded media files, delete/*write* Xing frame, *remove*/keep metadata padding, remove/*keep* metadata.|N/A
-`.ogg`|`liboggz`|Uses [OptiVorbis](https://github.com/OptiVorbis/OptiVorbis), extract+optimize+remux **Vorbis** streams only, remove/*keep* metadata on **Vorbis** streams only.|N/A
+`.oga` `.ogg` `.ogv`|`liboggz`|Uses [OptiVorbis](https://github.com/OptiVorbis/OptiVorbis), extract+optimize+remux **Vorbis** streams only, remove/*keep* metadata on **Vorbis** streams only.|N/A
 `.tar` `.cbt`|`tar`|Extract+optimize+remux files. Trust me, there **are** ways to optimize a TAR (without optimizing embedded files themselves). ***Umask + owner/group are not preserved.***|N/A
 `.Z`|-|Uses [flexiGIF](https://encode.su/threads/3008-flexiGIF-lossless-GIF-LZW-optimization?p=82323&viewfull=1#post82323), extract+optimize+remux, *normal*/insane encoding time.|N/A
 ---
