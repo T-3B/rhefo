@@ -54,7 +54,7 @@ Optimize 2 files with default settings and write them to an existing /outdir\
 Optimize all FLAC files in /indir, recursively and in hidden dirs and output will be copied to /outdir (filetree is recreated from /indir)\
 `rhefo -o /outdir -m "*.flac" /indir`\
 Same as above, but flattened (no subdirectories in /outdir)\
-`find -name "*.flac" -type f -print0 | xargs -0 rhefo -o /out`
+`find -name "*.flac" -type f -print0 | rhefo -0o /outdir`
 
 For further help and options, see the output of `rhefo -h` (and it's beautiful with lots of colors!).\
 As you can see, there are *global options* (starting with `glob`) and type-specific options (starting with `flac`, `png`, ...).
@@ -63,13 +63,13 @@ As you can see, there are *global options* (starting with `glob`) and type-speci
 Here is a list of tools used by this script, listed in alphabetical order, easy to copy-paste for downloading (these are ArchLinux packages, name can change between distros - open issues/merge requests if you know the names under other distributions like Ubuntu).\
 The more the formats supported by FFmpeg, the better ! See `ffmpeg-full` in the AUR. FFmpeg is an easy to solution for (de)muxing, but has some drawbacks. Therefore I try as much as possible not to use it, but in order to I have to write BASH code reading and extracting binary data, which takes time.\
 Global dependencies: `bash coreutils ffmpeg findutils gawk grep parallel util-linux`.\
-File type specific dependencies (see the [table below](#supported-file-types)): `flac gzip mupdf-tools qpdf tar`
+File type specific dependencies (see the [table below](#supported-file-types)): `flac gzip liboggz mupdf-tools qpdf tar`
 
 ## Add-ins
 This script also rely on several add-ins. Since they are not distributed (through package managers), I compile them myself (when needed) and host them here.\
 Only x86-64 and aarch64 is provided, see [here](addins/README.md) for more info.
 I'm open to suggestions (as always!), and can try building them for Windows if someone manages to make this BASH script work on Windows.\
-[apngopt](https://apng.sourceforge.io/) [ECT](https://github.com/fhanau/Efficient-Compression-Tool) [MozJPEG's `jpegtran`](https://github.com/mozilla/mozjpeg) [IJG's `jpegtran`](https://www.ijg.org) [JpegUltraScan](https://github.com/MegaByte/jpegultrascan) [MP3Packer](https://hydrogenaud.io/index.php/topic,32379.0.html)
+[apngopt](https://apng.sourceforge.io/) [ECT](https://github.com/fhanau/Efficient-Compression-Tool) [MozJPEG's `jpegtran`](https://github.com/mozilla/mozjpeg) [IJG's `jpegtran`](https://www.ijg.org) [JpegUltraScan](https://github.com/MegaByte/jpegultrascan) [MP3Packer](https://hydrogenaud.io/index.php/topic,32379.0.html) [OptiVorbis](https://github.com/OptiVorbis/OptiVorbis)
 
 ## Supported file types
 
@@ -77,7 +77,7 @@ For each file type, many softwares and settings are tested, and only the one(s) 
 In many cases, different programs are used one after the other, to achieve the best possible compression (check script comments for more info).
 ### Fully supported file types:
 
-[//]: # (TODO, remove normal/insane from "behaviour" description and add global speed - instant/normal/insane)
+[//]: # (TODO, remove normal/insane from "behavior" description and add global speed - instant/normal/insane)
 
 Extension|Deps|Behaviour|*Default*/insane&nbsp;speed
 :---:|:---:|---|:---:
@@ -85,6 +85,7 @@ Extension|Deps|Behaviour|*Default*/insane&nbsp;speed
 `.gz` `.tgz` `.svgz`|`gzip`|Uses [ECT](https://github.com/fhanau/Efficient-Compression-Tool), extract+optimize+remux, remove/*keep* original filename, *normal*/insane encoding time.|N/A
 `.jpg` `.jpeg`|-|Uses [MozJPEG's `jpegtran`](https://github.com/mozilla/mozjpeg), [IJG's `jpegtran`](https://www.ijg.org), [ECT](https://github.com/fhanau/Efficient-Compression-Tool), [JpegUltraScan](https://github.com/MegaByte/jpegultrascan), remove/*keep* metadata (EXIF, ...), *normal*/insane encoding time.
 `.mp3`|-|Uses [MP3Packer](https://hydrogenaud.io/index.php/topic,32379.0.html), extract+optimize+remux embedded media files, delete/*write* Xing frame, *remove*/keep metadata padding, remove/*keep* metadata.|N/A
+`.ogg`|`liboggz`|Uses [OptiVorbis](https://github.com/OptiVorbis/OptiVorbis), extract+optimize+remux **Vorbis** streams only, remove/*keep* metadata on **Vorbis** streams only.|N/A
 `.tar` `.cbt`|`tar`|Extract+optimize+remux files. Trust me, there **are** ways to optimize a TAR (without optimizing embedded files themselves). ***Umask + owner/group are not preserved.***|N/A
 `.Z`|-|Uses [flexiGIF](https://encode.su/threads/3008-flexiGIF-lossless-GIF-LZW-optimization?p=82323&viewfull=1#post82323), extract+optimize+remux, *normal*/insane encoding time.|N/A
 ---

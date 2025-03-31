@@ -144,6 +144,8 @@ List of options (global ones first, then grouped by file type):
   if set, bruteforce scans with both Moz/IJG jpegtran
 --mp3-lossy		better compression (208 bytes less), metalossy
   if set, do not write a Xing frame; some softwares will show a wrong duration
+--ogg-lossy		better compression, metalossy
+  if set, vendor string from Vorbis streams are removed
 --png-insane		better compression, far slower (TODO benchmark)
   if set, use 80199 iterations; default: 9 (PNG), 99 (APNG)
 --zip-insane		better compression, far slower (TODO benchmark)
@@ -186,7 +188,7 @@ find -name "*.flac" -type f -print0 | rhefo -0o /outdir' |\
 parseArgs() {  # not using `local` vars because this fct is only exectued once
 	[ $(printf '\1' | od -dAn) = 1 ] || error 'This script was not tested on BIG ENDIAN devices. I mainly use `printf %x` with' 'numbers of up to 4 bytes.' 'PLEASE, open an issue and if you have time HELP ME supporting this architecture' 'by simply testing! This would really help a lot, since I only have little-endian' 'devices. Seriously, please.'
 	getopt -T && { error 'Your `getopt` is not compatible with this script. Open an issue.' 4;}
-	args=$(getopt -o hx:09j:klm:ESo:p:st:y -l help,extract-addins:,null,glob-insane,glob-jobs:,glob-keeptime,glob-lossy,glob-filemask:,glob-noextract,glob-nosort,glob-output:,glob-prefix:,glob-strip,glob-threads:,glob-tmp:,glob-update,flac-insane,flac-lossy,flac-subset,gzip-insane,gzip-lossy,mp3-lossy,png-insane,zip-insane -n rhefo -s bash -- "$@")
+	args=$(getopt -o hx:09j:klm:ESo:p:st:y -l help,extract-addins:,null,glob-insane,glob-jobs:,glob-keeptime,glob-lossy,glob-filemask:,glob-noextract,glob-nosort,glob-output:,glob-prefix:,glob-strip,glob-threads:,glob-tmp:,glob-update,flac-insane,flac-lossy,flac-subset,gzip-insane,gzip-lossy,mp3-lossy,ogg-lossy,png-insane,zip-insane -n rhefo -s bash -- "$@")
 	(($?)) && error 'Could not parse args. See the help message `rhefo -h`.'
 	TMPDIR=/dev/shm  # mktemp uses directly TMPDIR, so set it instead of another variable globtmp (or we should specify this variable as an argument)
 	eval set -- "$args"
@@ -199,13 +201,13 @@ parseArgs() {  # not using `local` vars because this fct is only exectued once
 			-9 | --glob-insane)		flacinsane=;gzipinsane=;jpeginsane=;pnginsane=;zipinsane=;;
 			-j | --glob-jobs)		((0<$2)) || error "Wrong jobs int: '$2'."; globjobs=$2; shift;;
 			-k | --glob-keeptime)	globkeeptime=;;
-			-l | --glob-lossy)		gziplossy=;flaclossy=;mp3lossy=;;
+			-l | --glob-lossy)		gziplossy=;flaclossy=;mp3lossy=;ogglossy=;;
 			-m | --glob-filemask)	[ "$2" ] || error "Filemask is empty."; globfilemask=$2; shift;;
 			-E | --glob-noextract)	globnoextract=;;
 			-S | --glob-nosort)		globnosort=;;
 			-o | --glob-output) 	[[ -d "$2" || -w "$2" ]] || error "Output directory '$2' does not exist or cannot write to it."; globoutput=$(realpath "$2" 2>/dev/null); shift;;
 			-p | --glob-prefix)		[ "$2" ] || error 'Prefix is empty.'; globprefix=$2; shift;;
-			-s | --glob-strip)		globstrip=;gziplossy=;flaclossy=;mp3lossy=;;
+			-s | --glob-strip)		globstrip=;gziplossy=;flaclossy=;mp3lossy=;ogglossy=;;
 			-t | --glob-threads)	((0<$2 && $2<=$(nproc --all))) || error "Wrong threads int: '$2'."; threadlimit $2; shift;;
 			--glob-tmp)				[[ -d "$2" && -r "$2" && -w "$2" ]] && TMPDIR=$(realpath "$2") || { warning 'Could not use given --glob-tmp, using "/tmp" instead.'; TMPDIR=/tmp;}; shift;;
 			-y | --glob-update)		globupdate=;;
@@ -216,6 +218,7 @@ parseArgs() {  # not using `local` vars because this fct is only exectued once
 			--gzip-lossy)			gziplossy=;;
 			--jpeg-insane)			jpeginsane=;;
 			--mp3-lossy)			mp3lossy=;;
+			--ogg-lossy)			ogglossy=;;
 			--png-insane)			pnginsane=;;
 			--zip-insane)			zipinsane=;;
 			--zip-nodeflate)		zipnodeflate=;;
@@ -459,6 +462,11 @@ compressFile() {	# warning: $1 can be empty
 			# use mp3packer to add Xing frame (with real duration) of 208 bytes (ffmpeg Xing frame is 522), TODO could be even smaller than 208 bytes if I create it myself (since strings "mp3packer" or "Lavf" are written to Xing)
 			echo PPPPPPPPPPPPPPPPPPPPPp
 			[ -v mp3lossy ] || mp3packer -u "$tmp" "$tmp.old" >/dev/null;;
+		audio/ogg | video/ogg)
+			oggz-info "$in" | awk '/serialno/ {i++} /Vorbis/ {print i-1}' | parallel 'oggz-rip -i {} -o "$tmp".{}.ogg "$in"; optivorbis -q ${ogglossy+--vendor_string_action empty} ${globstrip+--comment_fields_action delete} "$tmp".{}.ogg "$tmp".{}_opt.ogg; rm "$tmp".{}.ogg'  # extract and optimize Vorbis streams
+			oggz-rip $(printf -- '-c %s ' $(oggz-known-codecs | grep -v Vorbis)) -o "$tmp".tmp.ogg "$in"  # extract all others streams
+			oggz-merge -o "$tmp" "$tmp".*
+			rm "$tmp".*;;
 		image/gif)
 			# gifski and ImageMagick (-quality 100 -layers optimize) cannot recompress losslessly
 			# gifsicle and flexiGIF both can produce bigger output than input, only gifsicle *then* flexiGIF seems useful
