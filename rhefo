@@ -463,9 +463,10 @@ compressFile() {	# warning: $1 can be empty
 			echo PPPPPPPPPPPPPPPPPPPPPp
 			[ -v mp3lossy ] || mp3packer -u "$tmp" "$tmp.old" >/dev/null;;
 		audio/ogg | video/ogg)
+			# todo rn only works on Vorbis streams, but would be cool to at least remove metadata for others
 			oggz-info "$in" | awk '/serialno/ {i++} /Vorbis/ {print i-1}' | parallel 'oggz-rip -i {} -o "$tmp".{}.ogg "$in"; optivorbis -q ${ogglossy+--vendor_string_action empty} ${globstrip+--comment_fields_action delete} "$tmp".{}.ogg "$tmp".{}_opt.ogg; rm "$tmp".{}.ogg'  # extract and optimize Vorbis streams
 			oggz-rip $(printf -- '-c %s ' $(oggz-known-codecs | grep -v Vorbis)) -o "$tmp".tmp.ogg "$in"  # extract all others streams
-			oggz-merge -o "$tmp" "$tmp".*
+			oggz-merge -o "$tmp" "$tmp".* |& grep 'oggz-merge: WARNING: Merging Ogg Vorbis I files' >/dev/null && { warning "'$in': could not mux streams properly since there are several Vorbis streams and nothing else."; cp "$in" "$tmp";}
 			rm "$tmp".*;;
 		image/gif)
 			# gifski and ImageMagick (-quality 100 -layers optimize) cannot recompress losslessly
