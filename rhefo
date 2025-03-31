@@ -534,7 +534,8 @@ compressFile() {	# warning: $1 can be empty
 			#upx -9 --ultra-brute -o out in
 			cp "$in" "$tmp";;  # TODO also cp in -> tmp IF THERE IS ANY ERROR (what about set -e or something like that?)
 	esac
-	(((size-=$(wc -c <"$tmp"))<=0)) && { info "'$in'$([ $3 ] || echo " (embedded file from '$inParent')"): could not compress further. Input file was kept."; cp "$in" "$tmp"; size=0;}
+	((size_tmp=$(wc -c <"$tmp"),(size-=size_tmp)<=0)) && { info "'$in'$([ $3 ] || echo " (embedded file from '$inParent')"): could not compress further. Input file was kept."; cp "$in" "$tmp"; size=0;}
+	((size_tmp)) || { warning "'$in'$([ $3 ] || echo " (embedded file from '$inParent')"): empty output! Report the issue. Input file was kept."; cp "$in" "$tmp"; size=0;}
 	chmod $umask "$tmp"
 	[ -v globkeeptime ] && touch -md"$mtime" "$tmp" && touch -ad"$atime" "$tmp"
 	if [ $3 ]
