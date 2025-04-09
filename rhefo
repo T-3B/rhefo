@@ -410,6 +410,9 @@ compressFile() {	# warning: $1 can be empty
 			# Warning! Do not use ffmpeg as it merges all tags with the same key within a single tag (with ';' as a separator).
 			if ((2==$(metaflac --show-channels "$in") && 10==$(flac -sdc "$in" | sox - -n oops stat |& grep -c 0.000000)))  # if the input is fake stereo (left = right, strictly), then extract left channel
 			then flac -sdc "$in" | sox - -t wav - remix 1 | flac - -s0fP 0 --no-seektable -o "$tmp"
+				metaflac --remove-all "$tmp"
+				metaflac --list --data-format=binary --block-type=VORBIS_COMMENT,PICTURE,APPLICATION "$in" | metaflac --append "$tmp"
+				info "'$in' is fake stereo: the 2 channels are bit-exact. Extracted one into mono."
 			else cp "$in" "$tmp"
 			fi
 			if ! [ -v globstrip ]
