@@ -251,7 +251,6 @@ parseArgs() {  # not using `local` vars because this fct is only exectued once
 		realpath -z -- "$@" | { cd /; parallel --xargs -q0 find {} -type f ${globfilemask+-name "$globfilemask"} -printf '%s\0%P\0%H\0' | { [ -v globnosort ] && cat || sortFilesBySize;} | parallel -j${globjobs-100%} -0L3 --lb --bar compressFile {2} {3} {1}; cd - >/dev/null;}
 		# Thanks for the people helping me finding a way to sort by filesize (sorting by group of 3 elements): https://stackoverflow.com/a/76028193/13227011
 		# TODO don't compressFile duplicates (explicitly twice same input or implicitely - with the file and the parent folder)
-		# TODO test with filenames having $@-*
 
 		((s=SECONDS, h=s/3600, m=s/60-h*60, s%=60))
 		set -- $(<"$globstatsfile")
@@ -404,13 +403,15 @@ compressFile() {	# warning: $1 can be empty
 			#subdivide_tukey(5);gauss(0.1);tukey(5);partial_tukey(5);punchout_tukey(5);welch;bartlett;bartlett_hann;blackman;blackman_harris_4term_92db;connes;flattop;hamming;hann;kaiser_bessel;nuttall;rectangle;triangle
 			#flaccid --in liberate.flac --lax --out liberate_VarSizeBruteForced.flac --peakset-window 48 --preserve-flac-metadata --queue 8192 --workers 16 --tweak 1 --merge 0 --analysis-apod 'subdivide_tukey(5);gauss(0.1);tukey(5);partial_tukey(5);punchout_tukey(5);welch;bartlett;bartlett_hann;blackman;blackman_harris_4term_92db;connes;flattop;hamming;hann;kaiser_bessel;nuttall;rectangle;triangle' --output-apod 'subdivide_tukey(5);gauss(0.1);tukey(5);partial_tukey(5);punchout_tukey(5);welch;bartlett;bartlett_hann;blackman;blackman_harris_4term_92db;connes;flattop;hamming;hann;kaiser_bessel;nuttall;rectangle;triangle' --analysis-comp mepl32r15 --output-comp mepl32r15 --mode peakset --blocksize-list 512,1024,1536,2048,2560,3072,3584,4096,4608
 
-			# TODO detect and compress if mono was encoded as stereo
 			# TODO flac can be in ogg/oga!
 			# TODO Ogg only supports Opus, Vorbis, FLAC, A-law PCM, μ-law PCM, IEEE floating-point PCM, Speex and CELT.[e] OGMtools supports MP3 and AC-3 in Ogg.
 			# TODO bruteforce blocksize (the size providing best ratio - mean - is 4096 with actual flags)
 
 			# Warning! Do not use ffmpeg as it merges all tags with the same key within a single tag (with ';' as a separator).
-			cp "$in" "$tmp"
+			if ((2==$(metaflac --show-channels "$in") && 10==$(flac -sdc "$in" | sox - -n oops stat |& grep -c 0.000000)))  # if the input is fake stereo (left = right, strictly), then extract left channel
+			then flac -sdc "$in" | sox - -t wav - remix 1 | flac - -s0fP 0 --no-seektable -o "$tmp"
+			else cp "$in" "$tmp"
+			fi
 			if ! [ -v globstrip ]
 			then a=$(metaflac --list --block-type=PICTURE "$tmp" | grep -oP '(?<=^METADATA block #)\d+$')  # PICTURE blocks IDs
 				# extract pictures (pics themselves and blocks), filenames written to array 'a'
@@ -440,7 +441,6 @@ compressFile() {	# warning: $1 can be empty
 			[ -v a ] && { wait; for p in $a; do metaflac --append "$tmp" <"$tmp".$p.blockNew; rm "$tmp".$p.blockNew; done;}  # we add PICTUREs back to the FLAC file
 			metaflac --remove --block-type=PADDING --dont-use-padding "$tmp";;
 		audio/mpeg | audio/mp3 | audio/mpeg3 | audio/x-mpeg-3)
-			# TODO detect and compress if mono was encoded as stereo
 			# MP3Packer will write "mp3packer2.04-268\n" in the needed *padding* of frames, removing them break the file (as they're needed). We could remove the padding only at the COMPLETELY end of file, even if FFmpeg decode it fine (and same checksum), some softwares will report an error (and if after removing the padding we reuse MP3Packer on it, boom the checksum does not match anymore!!!)
 			# TODO change ffmpeg to another software, because convert ID3 tags to TXXX (comment: https://trac.ffmpeg.org/ticket/8996; lyrics: https://trac.ffmpeg.org/ticket/8795; perhaps others); the good thing with ffmpeg is: it can remove ID3 completely, it will convert IDv1 to IDv2, it will use UTF-8 (instead of heavier UTF-16), can remove Xing frame
 			#ffCompressStreams "$tmp" mp3  # TODO see if works and doesn't add metadata for example
@@ -463,7 +463,8 @@ compressFile() {	# warning: $1 can be empty
 			echo PPPPPPPPPPPPPPPPPPPPPp
 			[ -v mp3lossy ] || mp3packer -u "$tmp" "$tmp.old" >/dev/null;;
 		audio/ogg | video/ogg)
-			# todo rn only works on Vorbis streams, but would be cool to at least remove metadata for others
+			# TODO rn only works on Vorbis streams, but would be cool to at least remove metadata for others
+			# do not use oggz-comment to remove metadata as it'll inflate file by chaing packets/page
 			oggz-info "$in" | awk '/serialno/ {i++} /Vorbis/ {print i-1}' | parallel 'oggz-rip -i {} -o "$tmp".{}.ogg "$in"; optivorbis -q ${ogglossy+--vendor_string_action empty} ${globstrip+--comment_fields_action delete} "$tmp".{}.ogg "$tmp".{}_opt.ogg; rm "$tmp".{}.ogg'  # extract and optimize Vorbis streams
 			oggz-rip $(printf -- '-c %s ' $(oggz-known-codecs | grep -v Vorbis)) -o "$tmp".tmp.ogg "$in"  # extract all others streams
 			oggz-merge -o "$tmp" "$tmp".* |& grep 'oggz-merge: WARNING: Merging Ogg Vorbis I files' >/dev/null && { warning "'$in': could not mux streams properly since there are several Vorbis streams and nothing else."; cp "$in" "$tmp";}
