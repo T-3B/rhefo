@@ -468,10 +468,16 @@ compressFile() {	# warning: $1 can be empty
 		audio/ogg | video/ogg)
 			# TODO rn only works on Vorbis streams, but would be cool to at least remove metadata for others
 			# do not use oggz-comment to remove metadata as it'll inflate file by chaing packets/page
-			oggz-info "$in" | awk '/serialno/ {i++} /Vorbis/ {print i-1}' | parallel 'oggz-rip -i {} -o "$tmp".{}.ogg "$in"; optivorbis -q ${ogglossy+--vendor_string_action empty} ${globstrip+--comment_fields_action delete} "$tmp".{}.ogg "$tmp".{}_opt.ogg; rm "$tmp".{}.ogg'  # extract and optimize Vorbis streams
-			oggz-rip $(printf -- '-c %s ' $(oggz-known-codecs | grep -v Vorbis)) -o "$tmp".tmp.ogg "$in"  # extract all others streams
-			oggz-merge -o "$tmp" "$tmp".* |& grep 'oggz-merge: WARNING: Merging Ogg Vorbis I files' >/dev/null && { warning "'$in': could not mux streams properly since there are several Vorbis streams and nothing else."; cp "$in" "$tmp";}
-			rm "$tmp".*;;
+			if [[ $(oggz-codecs "$in") = vorbis && ${a=$(oggz-codecs -a "$in")} != vorbis ]] 2>/dev/null  # oggz-codecs prints a newline char on stderr...
+			then warning "'$in': can not mux streams properly since there are several Vorbis streams and nothing else."
+				cp "$in" "$tmp"  # todo: oggz-merge does not support a simple mux - without interleaving pages - for multiple vorbis streams (and nothing else), would print "oggz-merge: WARNING: Merging Ogg Vorbis I files [...]"
+			else oggz-info "$in" | awk '/serialno/ {i++} /Vorbis/ {print i-1}' | parallel 'oggz-rip -i {} -o "$tmp".{}.ogg "$in"; optivorbis -q ${ogglossy+--vendor_string_action empty} ${globstrip+--comment_fields_action delete} "$tmp".{}.ogg "$tmp".{}_opt.ogg; rm "$tmp".{}.ogg'  # extract and optimize Vorbis streams
+				[ $a = vorbis ] && mv "$tmp".* "$tmp" || {
+					oggz-rip $(printf -- '-c %s ' $(oggz-known-codecs | grep -v Vorbis)) -o "$tmp".tmp.ogg "$in"  # extract all others streams
+					oggz-merge -o "$tmp" "$tmp".*
+				} 
+			fi
+			rm -f "$tmp".*;;
 		image/gif)
 			# gifski and ImageMagick (-quality 100 -layers optimize) cannot recompress losslessly
 			# gifsicle and flexiGIF both can produce bigger output than input, only gifsicle *then* flexiGIF seems useful
