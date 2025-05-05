@@ -91,6 +91,8 @@ List of options (global ones first, then grouped by file type):
   only extract add-ins embedded in this script to <path> then exit
 --null | -0
   Use NUL as a delimiter instead of newline for inputs by stdin
+--glob-downmix
+  With audio, remove superfluous channels that are exact duplicates of another.
 --glob-filemask=<mask> | -m <mask>
   only filenames matching the <mask> will be optimized (e.g. "*.mp3")
 --glob-insane | -9	better compression
@@ -188,7 +190,7 @@ find -name "*.flac" -type f -print0 | rhefo -0o /outdir' |\
 parseArgs() {  # not using `local` vars because this fct is only exectued once
 	[ $(printf '\1' | od -dAn) = 1 ] || error 'This script was not tested on BIG ENDIAN devices. I mainly use `printf %x` with' 'numbers of up to 4 bytes.' 'PLEASE, open an issue and if you have time HELP ME supporting this architecture' 'by simply testing! This would really help a lot, since I only have little-endian' 'devices. Seriously, please.'
 	getopt -T && { error 'Your `getopt` is not compatible with this script. Open an issue.' 4;}
-	args=$(getopt -o hx:09j:klm:ESo:p:st:y -l help,extract-addins:,null,glob-insane,glob-jobs:,glob-keeptime,glob-lossy,glob-filemask:,glob-noextract,glob-nosort,glob-output:,glob-prefix:,glob-strip,glob-threads:,glob-tmp:,glob-update,flac-insane,flac-lossy,flac-subset,gzip-insane,gzip-lossy,mp3-lossy,ogg-lossy,png-insane,zip-insane -n rhefo -s bash -- "$@")
+	args=$(getopt -o hx:09j:klm:ESo:p:st:y -l help,extract-addins:,null,glob-downmix,glob-insane,glob-jobs:,glob-keeptime,glob-lossy,glob-filemask:,glob-noextract,glob-nosort,glob-output:,glob-prefix:,glob-strip,glob-threads:,glob-tmp:,glob-update,flac-insane,flac-lossy,flac-subset,gzip-insane,gzip-lossy,mp3-lossy,ogg-lossy,png-insane,zip-insane -n rhefo -s bash -- "$@")
 	(($?)) && error 'Could not parse args. See the help message `rhefo -h`.'
 	TMPDIR=/dev/shm  # mktemp uses directly TMPDIR, so set it instead of another variable globtmp (or we should specify this variable as an argument)
 	eval set -- "$args"
@@ -198,6 +200,7 @@ parseArgs() {  # not using `local` vars because this fct is only exectued once
 			--help)					echo "$help"; exit;;
 			-x | --extract-addins)	[[ -d "$2" || -w "$2" ]] || error "Output directory '$2' does not exist or cannot write to it."; extractAddins "$2"; exit;;
 			-0 | --null)			stdinnull=;;
+			--glob-downmix)			globdownmix=;;
 			-9 | --glob-insane)		flacinsane=;gzipinsane=;jpeginsane=;pnginsane=;zipinsane=;;
 			-j | --glob-jobs)		((0<$2)) || error "Wrong jobs int: '$2'."; globjobs=$2; shift;;
 			-k | --glob-keeptime)	globkeeptime=;;
@@ -409,10 +412,11 @@ compressFile() {	# warning: $1 can be empty
 
 			# Warning! Do not use ffmpeg as it merges all tags with the same key within a single tag (with ';' as a separator).
 			if ((2==$(metaflac --show-channels "$in") && 10==$(flac -sdc "$in" | sox - -n oops stat |& grep -c 0.000000)))  # if the input is fake stereo (left = right, strictly), then extract left channel
-			then flac -sdc "$in" | sox - -t wav - remix 1 | flac - -s0fP 0 --no-seektable -o "$tmp"
-				metaflac --remove-all "$tmp"
-				metaflac --list --data-format=binary --block-type=VORBIS_COMMENT,PICTURE,APPLICATION "$in" | metaflac --append "$tmp"
-				info "'$in' is fake stereo: the 2 channels are bit-exact. Extracted one into mono."
+			then [ -v globdownmix ] && { flac -sdc "$in" | sox - -t wav - remix 1 | flac - -s0fP 0 --no-seektable -o "$tmp"
+					metaflac --remove-all "$tmp"
+					metaflac --list --data-format=binary --block-type=VORBIS_COMMENT,PICTURE,APPLICATION "$in" | metaflac --append "$tmp"
+				} || cp "$in" "$tmp"
+				info "'$in' is fake stereo: the 2 channels are bit-exact. ${globdownmix+Extracted one into mono output. The checksums will be different, but the operation is lossless!}${globdownmix-To extract it into a mono output, use --glob-downmix.}"
 			else cp "$in" "$tmp"
 			fi
 			if ! [ -v globstrip ]
@@ -424,7 +428,7 @@ compressFile() {	# warning: $1 can be empty
 				# now the {}.blockNew contains the opt picture, with correct size. todo Colors (the 4 bytes just before pic size) could be changed for example by ECT. Colors are the number of indexed colors; tried and everything works on PC if it's not updated; we could use `identify -verbose "$tmp"` and look at "Colormap entries:", if not in output then not indexed (at least for PNG), would add a dependency I don't want. Could also remove all block from FLAC, try to import pic and let FLAC figure it out (Colors) for me then copy (too much work for what it brings)
 			fi
 			# TODO -j only if 1.5.0
-			flac "$tmp" -j 16 -o "$tmp".new -smepb 4096 -P 0 -r ${flacsubset+8 -l $(($(metaflac --show-sample-rate "$tmp")>48000?32:12))} ${flacsubset-15 -l 32 --lax} -A subdivide_tukey\(4${flacinsane+0}\)
+			flac "$tmp" -j $(nproc) -o "$tmp".new -smepb 4096 -P 0 -r ${flacsubset+8 -l $(($(metaflac --show-sample-rate "$tmp")>48000?32:12))} ${flacsubset-15 -l 32 --lax} -A subdivide_tukey\(4${flacinsane+0}\)
 			flac -sa "$tmp" "$tmp".new
 			v=$(($(tac "${tmp%.*}".ana | grep -oPm1 '(?<=\soffset=)\d+') - $(grep -oPm1 '(?<=\soffset=)\d+' "${tmp%.*}".ana) + $(tac "${tmp%.*}".ana | grep -oPm1 '(?<=\sbits=)\d+') / 8))  # to get the FLAC stream size, we substract 1st and last frames' offset, then add the length of the last frame (we could have used `metaflac --remove-all` but too much mem-hungry)
 			p=$(($(tac "$tmp".ana      | grep -oPm1 '(?<=\soffset=)\d+') - $(grep -oPm1 '(?<=\soffset=)\d+' "$tmp".ana     ) + $(tac "$tmp".ana      | grep -oPm1 '(?<=\sbits=)\d+') / 8))
@@ -450,20 +454,15 @@ compressFile() {	# warning: $1 can be empty
 			# TODO compress album arts (idk if we can embed something else)
 			# TODO remove FFmpeg by more binary BASH logic, keep in mind that FFmpeg is only great for the UTF-16 -> UTF-8 conversion (check mp3unicode package) and Xing frame removal
 			mp3packer -z --workers 1 -f "$in" "$tmp" >/dev/null  # mp3packer always adds a Xing/LAME frame
-			echo WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW
 			# TODO REMOVE FFmpeg AT ALL COSTS!!!!!!! It cannot copy losslessly the MP3 stream LOL. I just opened a ticket for it: https://trac.ffmpeg.org/ticket/10995
 			ffmpeg -v error -i "$tmp" -map 0 -c copy -fflags +bitexact -write_xing 0 -metadata_header_padding 10 "$tmp.mp3"  # FFmpeg 6.0 will ALWAYS write at least 10 bytes of padding (even if no ID3 metadata), so I use 10 padding too to prevent unpleasant surprise in the future
-			echo AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 			if [ -v globstrip ]
 			then mp3packer -s -t -f "$tmp.mp3" "$tmp"  >/dev/null  # remove everything that's not the MP3 stream itself  # TODO still does not remove side metadata (see file)
 			elif ((v=(0x$(getBytes "$tmp.mp3" 6)<<21|0x$(getBytes "$tmp.mp3" 7)<<14|0x$(getBytes "$tmp.mp3" 8)<<7|0x$(getBytes "$tmp.mp3" 9))-10))  # Easier to do the test after 1st ffmpeg command: if ID3 length is not 10 then trim, otherwise remove completely ID3 (since there is only padding).
-			then echo MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
-				{ dd status=none bs=6 count=1 iflag=fullblock; printf $(printf '\\x%x' $((v>>21)) $((v>>14&127)) $((v>>7&127)) $((v&127))); dd status=none bs=$v count=1 iflag=fullblock iflag=skip_bytes skip=4; dd status=none bs=4k iflag=fullblock iflag=skip_bytes skip=10;} <"$tmp.mp3" >"$tmp"  # will remove the 10 bytes padding; ID3v2 length is big-endian
+			then { dd status=none bs=6 count=1 iflag=fullblock; printf $(printf '\\x%x' $((v>>21)) $((v>>14&127)) $((v>>7&127)) $((v&127))); dd status=none bs=$v count=1 iflag=fullblock iflag=skip_bytes skip=4; dd status=none bs=4k iflag=fullblock iflag=skip_bytes skip=10;} <"$tmp.mp3" >"$tmp"  # will remove the 10 bytes padding; ID3v2 length is big-endian
 			else ffmpeg -v error -y -i "$tmp.mp3" -map 0 -c copy -fflags +bitexact -write_xing 0 -id3v2_version 0 "$tmp"
 			fi
-			exit
 			# use mp3packer to add Xing frame (with real duration) of 208 bytes (ffmpeg Xing frame is 522), TODO could be even smaller than 208 bytes if I create it myself (since strings "mp3packer" or "Lavf" are written to Xing)
-			echo PPPPPPPPPPPPPPPPPPPPPp
 			[ -v mp3lossy ] || mp3packer -u "$tmp" "$tmp.old" >/dev/null;;
 		audio/ogg | video/ogg)
 			# TODO rn only works on Vorbis streams, but would be cool to at least remove metadata for others
@@ -478,6 +477,8 @@ compressFile() {	# warning: $1 can be empty
 				} 
 			fi
 			rm -f "$tmp".*;;
+		audio/x-wavpack)  # FFmpeg will be slightly smaller than wavpack official encoder (for one thing, it lacks the WavPack 5 block checksums - but maybe not only? idk)
+			;;
 		image/gif)
 			# gifski and ImageMagick (-quality 100 -layers optimize) cannot recompress losslessly
 			# gifsicle and flexiGIF both can produce bigger output than input, only gifsicle *then* flexiGIF seems useful
