@@ -62,7 +62,7 @@ As you can see, there are *global options* (starting with `glob`) and type-speci
 ## Dependencies
 Here is a list of tools used by this script, listed in alphabetical order, easy to copy-paste for downloading (these are ArchLinux packages, name can change between distros - open issues/merge requests if you know the names under other distributions like Ubuntu).\
 The more the formats supported by FFmpeg, the better ! See `ffmpeg-full` in the AUR. FFmpeg is an easy to solution for (de)muxing, but has some drawbacks. Therefore I try as much as possible not to use it, but in order to I have to write BASH code reading and extracting binary data, which takes time.\
-Global dependencies: `bash coreutils ffmpeg findutils gawk grep parallel util-linux`.\
+Global dependencies: `bash coreutils ffmpeg findutils gawk grep kid3-common parallel util-linux`.\
 File type specific dependencies (see the [table below](#supported-file-types)): `flac gzip liboggz mupdf-tools qpdf tar`
 
 ## Add-ins
