@@ -291,6 +291,11 @@ getBytes() {
 	od --endian=big -An -j$2 -N${3-1} -vtx1 ${1:+"$1"} | tr -d ' \n'  # remove spaces and newline from output; for now everything I used only needed big endian
 }
 
+# $1=file;	$2=Bytes offset
+synchsafeToInt() {
+	echo $((0x$(getBytes "$1" $2)<<21 | 0x$(getBytes "$1" $((1+$2)))<<14 | 0x$(getBytes "$1" $((2+$2)))<<7 | 0x$(getBytes "$1" $((3+$2)))))
+}
+
 # convert int to binary data ("1" => 0x1) BIG endian;	$1=integer	$2=nbr of output bytes (padding with 0's if needed - "1" => 0x0000001)
 intToBytes() {
 	local i
@@ -310,10 +315,9 @@ catchSmallestFile() {
 # $1 = file to update
 compressID3() {  # tested also tone and eyeD3; eyeD3 would be nice but python (and wait for this to release https://github.com/nicfit/eyeD3/issues/675)
 	# eyeD3 --no-color --no-config --force-update --encoding utf8 --max-padding 0 --to-v2.4 --remove-v1 --remove-all-unknown --backup
-	# TODO remove padding
-	local picType descr i=$(kid3-cli -c 'get all 2' "$1" | grep -c '^  Picture')
+	local picType descr id3Len i=$(kid3-cli -c 'get all 2' "$1" | grep -c '^  Picture')
 	if [ -v mp3lossy ]
-	then kid3-cli -c ls "$1" | grep '^> 1-' && kid3-cli -c 'syncto 2' -c save "$1"  # copy ID3v1 to ID3v2 if latter did not exist
+	then kid3-cli -c ls "$1" | grep -q '^> 1-' && kid3-cli -c 'syncto 2' -c save "$1"  # copy ID3v1 to ID3v2 if latter did not exist
 		kid3-cli -c 'remove 1' -c save "$1"  # remove ID3v1
 	fi
 	kid3-cli -c 'config Tag.textEncoding 2' -c to24 -c textencoding -c save "$1" >/dev/null  # write to ID3v2.4 and 2=UTF-8
@@ -323,6 +327,19 @@ compressID3() {  # tested also tone and eyeD3; eyeD3 would be nice but python (a
 		([ -v mp3lossy ] && export globstrip=; compressFile "$1.$i")
 		kid3-cli -c "set APIC[$i]:'$1.$i' '$descr' 2" -c "set APIC[$i].pictureType $picType 2" -c save "$1"
 	done
+	if kid3-cli -c ls "$1" | grep -q '^> .2' && ! ((0x$(getBytes "$1" 5) & 2#10000))  # if ID3v2.4 is present and has no footer (if footer => no padding; idk if kid3 can write footer in output)
+	then ((i=10,id3Len=$(synchsafeToInt "$1" 6)+10))  # headers in ID3v2.4 are synchsafe and 10B (not included in frame size)
+		((0x$(getBytes "$1" 5) & 2#1000000 && (i+=$(synchsafeToInt "$1" 10))))  # optional extended header
+		while ((i<id3Len))
+		do	if ((0x$(getBytes "$1" $i)))
+			then ((i+=$(synchsafeToInt "$1" $((i+4)))+10))
+			else ((i-=10))
+				{ dd status=none bs=6 count=1 iflag=fullblock; printf $(printf '\\x%x' $((i>>21)) $((i>>14 & 0x7F)) $((i>>7 & 0x7F)) $((i & 0x7F))); dd status=none bs=$i count=1 iflag=fullblock iflag=skip_bytes skip=4; dd status=none bs=4k iflag=fullblock iflag=skip_bytes skip=$((id3Len-i-10));} <"$1" >"$1.new"
+				mv "$1.new" "$1"
+				break
+			fi
+		done
+	fi
 }
 
 # TODOOOOOOOOOOOOOOOO instead of no $3 if this is a subcall, use $SHLVL !!!!!!!!!!!!!!
