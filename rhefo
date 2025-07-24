@@ -315,7 +315,7 @@ catchSmallestFile() {
 # $1 = file to update
 compressID3() {  # tested also tone and eyeD3; eyeD3 would be nice but python (and wait for this to release https://github.com/nicfit/eyeD3/issues/675)
 	# eyeD3 --no-color --no-config --force-update --encoding utf8 --max-padding 0 --to-v2.4 --remove-v1 --remove-all-unknown --backup
-	local picType descr tot i=$(kid3-cli -c 'get all 2' "$1" | grep -c '^  Picture')
+	local picType descr mimeType tot i=$(kid3-cli -c 'get all 2' "$1" | grep -c '^  Picture')
 	if [ -v mp3lossy ]
 	then kid3-cli -c ls "$1" | grep -q '^> 1-' && kid3-cli -c 'syncto 2' -c save "$1"  # copy ID3v1 to ID3v2 if latter did not exist
 		kid3-cli -c 'remove 1' -c save "$1"  # remove ID3v1
@@ -324,9 +324,10 @@ compressID3() {  # tested also tone and eyeD3; eyeD3 would be nice but python (a
 	((tot=i-1))
 	while ((i--))
 	do	picType=$(kid3-cli -c "get APIC[$i].pictureType 2" "$1")  # 2=apply to ID3v2
-		descr=$(kid3-cli -c "get APIC[$i]:'$1.$i' 2" "$1")  # description + extract
+		mimeType=$(kid3-cli -c "get APIC[$i].mimeType 2" "$1")
+		descr=$(kid3-cli -c "get APIC[$i]:${1@Q}.$i 2" "$1")  # description + extract
 		([ -v mp3lossy ] && export globstrip=; compressFile "$1.$i")
-		kid3-cli -c "set APIC[$i]:'$1.$i' '$descr' 2" -c "set APIC[$tot].pictureType $picType 2" -c save "$1"  # updated APIC will become the one with greatest index
+		kid3-cli -c "set APIC[$i]:${1@Q}.$i ${descr@Q} 2" -c "set APIC[$tot].pictureType $picType 2" -c "set APIC[$tot].mimeType '$mimeType' 2" -c save "$1"  # updated APIC will become the one with greatest index
 	done
 	if kid3-cli -c ls "$1" | grep -q '^> .2' && ! ((0x$(getBytes "$1" 5) & 2#10000))  # if ID3v2.4 is present and has no footer (if footer => no padding; idk if kid3 can write footer in output)
 	then ((i=10,tot=$(synchsafeToInt "$1" 6)+10))  # headers in ID3v2.4 are synchsafe and 10B (not included in frame size)
