@@ -127,8 +127,8 @@ List of options (global ones first, then grouped by file type):
 --glob-tmp=<path>
   <path> is a directory intensively used for r/w; default is `/dev/shm`
   if does not exist, or cannot r/w in it, defaults to `/tmp`
---glob-update | -y
-  if set, will overwrite files in --glob-output
+--glob-update | -f
+  if set, will force file overwriting in --glob-output
 --flac-insane		better compression (~0.1% save), far slower (~200x)
   if set, run FLAC with the apodization function `subdivide_tukey(40)`
 --flac-lossy		better compression, metalossy
@@ -146,8 +146,8 @@ List of options (global ones first, then grouped by file type):
   default is to store it only if archive is not `originalName.gz`
 --jpeg-insane		better compression, far slower (TODO benchmark)
   if set, bruteforce scans with both Moz/IJG jpegtran
---mp3-lossy		better compression (208 bytes less), metalossy
-  if set, do not write a Xing frame; some softwares will show a wrong duration
+--mp3-lossy		better compression, metalossy
+  if set, delete ID3v1 and copy it to ID3v2 if did not exist
 --ogg-lossy		better compression, metalossy
   if set, vendor string from Vorbis streams are removed
 --png-insane		better compression, far slower (TODO benchmark)
@@ -192,7 +192,7 @@ find -name "*.flac" -type f -print0 | rhefo -0o /outdir' |\
 parseArgs() {  # not using `local` vars because this fct is only executed once
 	[ $(printf '\1' | od -dAn) = 1 ] || error 'This script was not tested on BIG ENDIAN devices. I mainly use `printf %x` with' 'numbers of up to 4 bytes.' 'PLEASE, open an issue and if you have time HELP ME supporting this architecture' 'by simply testing! This would really help a lot, since I only have little-endian' 'devices. Seriously, please.'
 	getopt -T && { error 'Your `getopt` is not compatible with this script. Open an issue.' 4;}
-	args=$(getopt -o hx:09j:klm:ESo:p:st:y -l help,extract-addins:,null,glob-downmix,glob-insane,glob-jobs:,glob-keeptime,glob-lossy,glob-filemask:,glob-noextract,glob-nosort,glob-output:,glob-prefix:,glob-strip,glob-threads:,glob-tmp:,glob-update,flac-insane,flac-lossy,flac-subset,gzip-insane,gzip-lossy,mp3-lossy,ogg-lossy,png-insane,zip-insane -n rhefo -s bash -- "$@")
+	args=$(getopt -o hx:09j:klm:ESo:p:st:f -l help,extract-addins:,null,glob-downmix,glob-insane,glob-jobs:,glob-keeptime,glob-lossy,glob-filemask:,glob-noextract,glob-nosort,glob-output:,glob-prefix:,glob-strip,glob-threads:,glob-tmp:,glob-update,flac-insane,flac-lossy,flac-subset,gzip-insane,gzip-lossy,mp3-lossy,ogg-lossy,png-insane,zip-insane -n rhefo -s bash -- "$@")
 	(($?)) && error 'Could not parse args. See the help message `rhefo -h`.'
 	TMPDIR=/dev/shm  # mktemp uses directly TMPDIR, so set it instead of another variable globtmp (or we should specify this variable as an argument)
 	eval set -- "$args"
@@ -215,7 +215,7 @@ parseArgs() {  # not using `local` vars because this fct is only executed once
 			-s | --glob-strip)		globstrip=;gziplossy=;flaclossy=;mp3lossy=;ogglossy=;;
 			-t | --glob-threads)	((0<$2 && $2<=$(nproc --all))) || error "Wrong threads int: '$2'."; threadlimit $2; shift;;
 			--glob-tmp)				[[ -d "$2" && -r "$2" && -w "$2" ]] && TMPDIR=$(realpath "$2") || { warning 'Could not use given --glob-tmp, using "/tmp" instead.'; TMPDIR=/tmp;}; shift;;
-			-y | --glob-update)		globupdate=;;
+			-f | --glob-update)		globupdate=;;
 			--flac-insane)			flacinsane=;;
 			--flac-lossy)			flaclossy=;;
 			--flac-subset)			flacsubset=;;
@@ -362,7 +362,7 @@ compressFile() {	# warning: $1 can be empty
 	[[ $3 && -v globoutput ]] && out=$globoutput/${2##*/}${1:+/$1}
 	[[ $3 && -v globprefix ]] && out=${out%/*}/$globprefix${out##*/}
 	if [[ $3 && (-v globoutput || -v globprefix) && ! -v globupdate && -e "$out" ]]
-	then warning "'$out' already exists, file not compressed nor updated." 'Rerun with -y to overwrite files in output directory, or with -p to add a prefix.'
+	then warning "'$out' already exists, file not compressed nor updated." 'Rerun with -f to overwrite files in output directory, or with -p to add a prefix.'
 		cd /
 		rm -r "${tmp%/*}"
 		return
@@ -490,10 +490,14 @@ compressFile() {	# warning: $1 can be empty
 		audio/mpeg | audio/mp3 | audio/mpeg3 | audio/x-mpeg-3)
 			# MP3Packer will write "mp3packer2.04-268\n" in the NEEDED padding of frames
 			# do not use FFmpeg because it converts ID3 tags to TXXX (comment: https://trac.ffmpeg.org/ticket/8996; lyrics: https://trac.ffmpeg.org/ticket/8795; perhaps others); FFmpeg 6.0 will ALWAYS write at least 10 bytes of padding (even if no ID3 metadata); AND IT CAN BE LOSSY EVEN WHEN COPYING AUDIO https://trac.ffmpeg.org/ticket/10995
-			# TODO remove Xing/LAME frame if mp3lossy
-			mp3packer -z --workers 1 -f "$in" "$tmp" >/dev/null  # mp3packer always adds a Xing/LAME frame
+			# todo we can remove Xing frame (only 208B, written by mp3packer, containing Xing + LAME tag) if mp3lossy
+			# But tags are chaotic in MP3, from what I read, here is a summary (https://www.codeproject.com/Articles/8295/MPEG-Audio-Frame-Header; http://gabriel.mp3-tech.org/mp3infotag.html) -- note: Info is for CBR, Lyrics requires ID3v1 present at the same time:
+			# 	start of file: ID3v2 + (Xing | Info + LAME) | VBRI + APEv2
+			# 	EOF: ID3v2 + APEv2 + APEv1 + MusicMatch tag + Lyrics3v1 + Lyrics3v2 + ID3v1
+
+			mp3packer -z --workers 1 -f "$in" "$tmp" >/dev/null  # mp3packer always writes a 208B Xing/LAME frame (for 44.1kHz at least)
 			if [ -v globstrip ]
-			then mp3packer -s -t -f -u "$tmp" "$tmp.old" >/dev/null  # remove everything that's not the MP3 stream itself  # TODO still does not remove side metadata (see file)
+			then mp3packer -s -t -f -u "$tmp" "$tmp.old" >/dev/null  # remove everything that's not the MP3 stream itself
 			else compressID3 "$tmp"
 			fi;;
 		audio/ogg | video/ogg)
@@ -584,7 +588,7 @@ compressFile() {	# warning: $1 can be empty
 	if [ $3 ]
 	then sem --fg --id "$globstatsfile" 'set -- $(<"$globstatsfile"); printf "$(('$size'+$1))\n$(('$3'+$2))\n$((1+$3))\n" >"$globstatsfile"'  # use a semaphore to allow only one thread to write stats at a time
 		if [[ -v globoutput && ! -v globupdate && -e "$out" ]]
-		then warning "'$out' already exists, not updated. Compressed version here: '$tmp'." 'Rerun with -y to overwrite files in output directory, or with -p to add a prefix.'  # TODO not remove with below rm -r
+		then warning "'$out' already exists, not updated. Compressed version here: '$tmp'." 'Rerun with -f to overwrite files in output directory, or with -p to add a prefix.'  # TODO not remove with below rm -r
 		else mv "$tmp" "$out"
 			chown -f --reference="$in" "$out"
 			chmod -f --reference="$in" "$out"
