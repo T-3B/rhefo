@@ -97,7 +97,7 @@ List of options (global ones first, then grouped by file type):
   With audio, remove superfluous channels that are exact duplicates of another.
 --glob-filemask=<mask> | -m <mask>
   only filenames matching the <mask> will be optimized (e.g. "*.mp3")
---glob-insane | -9	better compression
+--glob-insane | -9	better compression, far slower
   if set, all "insane" flags are set too (no quality/compatibility loss)
   to "compress" better; consider --glob-lossy (only for lossy metadata);
   compatibility-break and lossy flags are NOT set; TAKES A LOT OF TIME!!!
@@ -210,11 +210,11 @@ parseArgs() {  # not using `local` vars because this fct is only executed once
 			-m | --glob-filemask)	[ "$2" ] || error "Filemask is empty."; globfilemask=$2; shift;;
 			-E | --glob-noextract)	globnoextract=;;
 			-S | --glob-nosort)		globnosort=;;
-			-o | --glob-output) 	[[ -d "$2" || -w "$2" ]] || error "Output directory '$2' does not exist or cannot write to it."; globoutput=$(realpath "$2" 2>/dev/null); shift;;
+			-o | --glob-output) 	[[ -d "$2" || -w "$2" ]] || error "Output directory '$2' does not exist or cannot write to it."; globoutput=$(realpath -- "$2" 2>/dev/null); shift;;
 			-p | --glob-prefix)		[ "$2" ] || error 'Prefix is empty.'; globprefix=$2; shift;;
 			-s | --glob-strip)		globstrip=;gziplossy=;flaclossy=;mp3lossy=;ogglossy=;;
 			-t | --glob-threads)	((0<$2 && $2<=$(nproc --all))) || error "Wrong threads int: '$2'."; threadlimit $2; shift;;
-			--glob-tmp)				[[ -d "$2" && -r "$2" && -w "$2" ]] && TMPDIR=$(realpath "$2") || { warning 'Could not use given --glob-tmp, using "/tmp" instead.'; TMPDIR=/tmp;}; shift;;
+			--glob-tmp)				[[ -d "$2" && -r "$2" && -w "$2" ]] && TMPDIR=$(realpath -- "$2") || { warning 'Could not use given --glob-tmp, using "/tmp" instead.'; TMPDIR=/tmp;}; shift;;
 			-f | --glob-update)		globupdate=;;
 			--flac-insane)			flacinsane=;;
 			--flac-lossy)			flaclossy=;;
@@ -238,7 +238,7 @@ parseArgs() {  # not using `local` vars because this fct is only executed once
 	for i do [ -r "$i" ] || error "Input '$i' does not exist or cannot read it."; done
 
 	# create all the dir-tree to output folder
-	[ -v globoutput ] && { for i do [ -d "$i" ] && { [ "${globoutput#$(realpath "$i")}" = "$globoutput" ] || error "The --glob-output folder can't be inside an input folder."; cd -- "$i"; find . -type d -exec mkdir -p "$globoutput/$(basename "$(realpath "$i")")/{}" \;; cd - >/dev/null;}; done;}
+	[ -v globoutput ] && { for i do [ -d "$i" ] && { [ "${globoutput#$(realpath -- "$i")}" = "$globoutput" ] || error "The --glob-output folder can't be inside an input folder."; cd -- "$i"; find . -type d -exec mkdir -p "$globoutput/$(basename "$(realpath -- "$i")")/{}" \;; cd - >/dev/null;}; done;}
 	TMPDIR=$(mktemp --tmpdir -d .rhefo_${version}_tmpXXX)
 
 	printf '0\n0\n0\n' >"${globstatsfile=$(mktemp --tmpdir XXX)}"  # file where stats are wrote - to allow edit in subshells since we use `parallel`; 1st line is saved bytes, 2nd is input files size, 3rd is nbr input files
