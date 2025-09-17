@@ -522,20 +522,18 @@ compressFile() {	# warning: $1 can be empty
 			# gifsicle -o 1"$i" -O3 --no-comments --no-extensions --no-app-extensions --no-names input.gif
 			;;
 		image/jpeg)
-			# tested jpegtran ect leanify pingo jpegoptim curtail jpgcrush jhead jpegultrascan.pl; JPG optimizer benchmark: https://encode.su/threads/3987-Jpeg-Optimizer-testing
+			# tested jpegtran ect leanify pingo jpegoptim curtail jpgcrush jhead jpegultrascan.pl; JPG optimizer benchmark: https://encode.su/threads/3987-Jpeg-Optimizer-testing; exiv2 couldn't remove the whole XMP frame.
 
 			# TODO for Exif editing: if $globstrip, remove everything except these to be completely lossless:
 			# - ColorSpace, InteropIndex, ICC_Profile, Orientation; maybe others ? See https://exiftool.org/TagNames/EXIF.html
 			# Try to `jpegtran -rotate x -perfect -outfile out.jpg in.jpg` with rotation written in Exif (WARNING may also be mirrored), will exit with $?=1 if not lossless transformation  (CHECK ALSO `ect -autorotate`)
 			# TODO add -arithmetic coding with $jpgbroken
-
-			# TODOOOOOOOOOOOOOOOOO copy icc will drop the rotation of the image!!!!!!!!!!!!!!!!!!!!!!
-
-			# TODO `jhead -du` Or -purejpg which is a combination of params including -du; this command allowed Fox Wizard to beat me again (6 bytes smaller - metadata - than `ultrascan -b 13 -t 16 -a -i -s` !arithmetic!, ECT nor jpegtran could remove these 6 bytes)
 			if [ -v jpeginsane ]
-			then jpegultrascan.pl -qib3 ${globstrip+-s} -t$(nproc) -pjpegtran_ijg -ojpegtran_moz "$in" "$tmp"  # -b3 is really rarely beaten by high numbers
-			else jpegtran_moz -copy all -outfile "$tmp" "$in" && ect -9 -progressive -quiet ${globstrip+-strip} "$tmp"
-			fi;;
+			then jpegultrascan.pl -qib3 -t$(nproc) -pjpegtran_ijg -ojpegtran_moz "$in" "$tmp"  # -b3 is really rarely beaten by high numbers
+			else jpegtran_moz -copy all -outfile "$tmp" "$in" && ect -9 -progressive -quiet "$tmp"
+			fi
+			[ "$(exiftool -icc_profile:ProfileDescription -T "$tmp")" = 'sRGB IEC61966-2.1' ] && exiftool -q -q -icc_profile:all= -overwrite_original "$tmp"  # rm ICC if it's the std one
+			[ -v globstrip ] && exiftool -all= --icc_profile:all -q -overwrite_original "$tmp";;  # rm all except ICC
 		image/jxl)
 			# -e 10 needs libjxl 0.8.0
 			# cjxl -e 9 -d 0 --brotli_effort=11 -I 100 -g 3 -E 11
