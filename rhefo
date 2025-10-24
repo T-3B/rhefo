@@ -479,8 +479,8 @@ compressFile() {	# warning: $1 can be empty
 			then metaflac --remove --except-block-type=VORBIS_COMMENT,PICTURE "$tmp"
 				if metaflac --list --block-type=VORBIS_COMMENT "$tmp" | grep -q '^\s\scomments: 0$'
 				then metaflac --remove --block-type=VORBIS_COMMENT "$tmp"
-				else v=$(metaflac --show-vendor-tag "$tmp")
-					p=$(($(grep -abom1 "$v" "$tmp" | head -1 | cut -f1 -d:)-7))  # the first match is the vendor-string, use head because -om1 can output more than 1 match
+				elif v=$(metaflac --show-vendor-tag "$tmp") && [ "$v" ]
+				then p=$(($(grep -abom1 "$v" "$tmp" | head -1 | cut -f1 -d:)-7))  # the first match is the vendor-string, use head because -om1 can output more than 1 match
 					{ dd status=none bs=$p count=1 iflag=fullblock; ((p=0x$(getBytes '' 0 3)-${#v})); intToBytes $p 3; intToBytes 0 4; dd status=none bs=4k iflag=fullblock iflag=skip_bytes skip=$((4+${#v}));} <"$tmp" >"$tmp".new  # TL;DR: 0xaaabbbb<vendorString>; aaa length metadata block in big endian, bbbb length vendor string in little
 					mv "$tmp".new "$tmp"
 				fi
@@ -561,6 +561,7 @@ compressFile() {	# warning: $1 can be empty
 			# TODO remove useless alpha channel
 			# TODO pngout apparently can sometimes do better: Just running pngout followed by pngout /f0 will result in the optimal compression; set the size manually can help Low entropy = High values, High entropy = Small values
 			# TODO see (or better version than) optipng -fix -f 5 -i 0 -zc 9 -zm 9 -zs 0-3 -zw 32k -nb -nc -np -nx "$file"
+			# TODO pingo is really great for images with alpha, BUT WILL ALWAYS OUTPUT TO 8bpc
 			if [ $(ffprobe -v warning -show_entries stream=codec_name -of default=nk=1:nw=1 "$in") = apng ]
 			then # ect -1 ${globstrip+-strip} "$tmp"  # TODO (cannot strip using ECT since it drops all other frames - only 1st one is kept)
 				apngopt -z2 -i99${pnginsane+999} "$in" "$tmp" >/dev/null  # TODO to do better, we could split frames, use ECT --reuse, them remux   ;; TODO try pingo
