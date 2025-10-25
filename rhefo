@@ -469,7 +469,6 @@ compressFile() {	# warning: $1 can be empty
 			fi
 			# TODO -j only if 1.5.0
 			flac "$tmp" -j $(nproc) -o "$tmp".new -smepb 4096 -P 0 -r ${flacsubset+8 -l $(($(metaflac --show-sample-rate "$tmp")>48000?32:12))} ${flacsubset-15 -l 32 --lax} -A subdivide_tukey\(4${flacinsane+0}\)
-			flac -sa "$tmp" "$tmp".new
 			v=$(metaflac --remove-all --dont-use-padding -o >(wc -c) "$tmp")
 			p=$(metaflac --remove-all --dont-use-padding -o >(wc -c) "$tmp".new)
 			((v>p)) && mv "$tmp".new "$tmp" || rm "$tmp".new
