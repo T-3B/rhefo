@@ -312,6 +312,8 @@ catchSmallestFile() {
 	rm -f "$@"  # -f to not print err msg, since there's a missing file ("$a") 
 }
 
+ver_lte() { sort -CV <<<"$1"$'\n'"$2";}
+
 # $1 = file to update
 compressID3() {  # tested also tone and eyeD3; eyeD3 would be nice but python (and wait for this to release https://github.com/nicfit/eyeD3/issues/675)
 	# eyeD3 --no-color --no-config --force-update --encoding utf8 --max-padding 0 --to-v2.4 --remove-v1 --remove-all-unknown --backup
@@ -467,8 +469,8 @@ compressFile() {	# warning: $1 can be empty
 				parallel --lb 's=$(wc -c <"$tmp".{}); [ -v flaclossy ] && export globstrip=; compressFile "$tmp".{}; t=$(wc -c <"$tmp".{}); { intToBytes $((0x$(getBytes "" 0 4)-s+t)) 4; head -c $(($(wc -c <"$tmp".{}.block)-s-8)); intToBytes $t 4; cat "$tmp".{};} <"$tmp".{}.block >"$tmp".{}.blockNew; rm "$tmp".{}{,.block}' ::: $a & # compress PICTURES in parallel with --glob-strip; Taking the first 4 bytes as block length even if the first one isn't, easier to implement and works. We update block length, image data length and image data.
 				# now the {}.blockNew contains the opt picture, with correct size. todo Colors (the 4 bytes just before pic size) could be changed for example by ECT. Colors are the number of indexed colors; tried and everything works on PC if it's not updated; we could use `identify -verbose "$tmp"` and look at "Colormap entries:", if not in output then not indexed (at least for PNG), would add a dependency I don't want. Could also remove all block from FLAC, try to import pic and let FLAC figure it out (Colors) for me then copy (too much work for what it brings)
 			fi
-			# TODO -j only if 1.5.0
-			flac "$tmp" -j $(nproc) -o "$tmp".new -smepb 4096 -P 0 -r ${flacsubset+8 -l $(($(metaflac --show-sample-rate "$tmp")>48000?32:12))} ${flacsubset-15 -l 32 --lax} -A subdivide_tukey\(4${flacinsane+0}\)
+			# -j only available from 1.5.0
+			flac "$tmp" $(ver_lte 'flac 1.5.0' "$(flac -v)" && echo -j $(nproc)) -o "$tmp".new -smepb 4096 -P 0 -r ${flacsubset+8 -l $(($(metaflac --show-sample-rate "$tmp")>48000?32:12))} ${flacsubset-15 -l 32 --lax} -A subdivide_tukey\(4${flacinsane+0}\)
 			v=$(metaflac --remove-all --dont-use-padding -o >(wc -c) "$tmp")
 			p=$(metaflac --remove-all --dont-use-padding -o >(wc -c) "$tmp".new)
 			((v>p)) && mv "$tmp".new "$tmp" || rm "$tmp".new
