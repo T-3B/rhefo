@@ -190,7 +190,7 @@ find -name "*.flac" -type f -print0 | rhefo -0o /outdir' |\
 
 # Will parse arguments, and then start the whole optimization process (if no errors in the arguments)
 parseArgs() {  # not using `local` vars because this fct is only executed once
-	[ $(printf '\1' | od -dAn) = 1 ] || error 'This script was not tested on BIG ENDIAN devices. I mainly use `printf %x` with' 'numbers of up to 4 bytes.' 'PLEASE, open an issue and if you have time HELP ME supporting this architecture' 'by simply testing! This would really help a lot, since I only have little-endian' 'devices. Seriously, please.'
+	[ $(printf '\1' | od -dAn) = 1 ] || error 'This script was not tested on BIG ENDIAN devices. I mainly use `printf %x`' 'with numbers of up to 4 bytes.' 'PLEASE, open an issue and if you have time HELP ME supporting this' 'architecture by simply testing! This would really help a lot, since I only' 'have little-endian devices. Seriously, please.'
 	getopt -T && { error 'Your `getopt` is not compatible with this script. Open an issue.' 4;}
 	args=$(getopt -o hx:09j:klm:ESo:p:st:f -l help,extract-addins:,null,glob-downmix,glob-insane,glob-jobs:,glob-keeptime,glob-lossy,glob-filemask:,glob-noextract,glob-nosort,glob-output:,glob-prefix:,glob-strip,glob-threads:,glob-tmp:,glob-update,flac-insane,flac-lossy,flac-subset,gzip-insane,gzip-lossy,mp3-lossy,ogg-lossy,png-insane,zip-insane -n rhefo -s bash -- "$@")
 	(($?)) && error 'Could not parse args. See the help message `rhefo -h`.'
@@ -198,7 +198,7 @@ parseArgs() {  # not using `local` vars because this fct is only executed once
 	eval set -- "$args"
 	while :
 	do case "$1" in
-			-h)						echo "${help%%$'\n'*}"; echo "$help" | grep '\[;33m'; echo 'Run `rhefo --help` for the full help.'; exit;;
+			-h)						echo "${help%%$'\n'*}"; echo "$help" | grep -e '^Usage: ' -e '\[;33m'; echo 'Run `rhefo --help` for the full help.'; exit;;
 			--help)					echo "$help"; exit;;
 			-x | --extract-addins)	[[ -d "$2" || -w "$2" ]] || error "Output directory '$2' does not exist or cannot write to it."; extractAddins "$2"; exit;;
 			-0 | --null)			stdinnull=;;
