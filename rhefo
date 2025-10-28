@@ -238,7 +238,7 @@ parseArgs() {  # not using `local` vars because this fct is only executed once
 	for i do [ -r "$i" ] || error "Input '$i' does not exist or cannot read it."; done
 
 	# create all the dir-tree to output folder
-	[ -v globoutput ] && { for i do [ -d "$i" ] && { [ "${globoutput#$(realpath -- "$i")}" = "$globoutput" ] || error "The --glob-output folder can't be inside an input folder."; cd -- "$i"; find . -type d -exec mkdir -p "$globoutput/$(basename "$(realpath -- "$i")")/{}" \;; cd - >/dev/null;}; done;}
+	[ -v globoutput ] && { for i do [ -d "$i" ] && ( [ "${globoutput#$(realpath -- "$i")}" = "$globoutput" ] || error "The --glob-output folder can't be inside an input folder."; cd -- "$i"; find . -type d -exec mkdir -p "$globoutput/$(basename "$(realpath -- "$i")")/{}" \;; cd ~-;}; done;}
 	TMPDIR=$(mktemp --tmpdir -d .rhefo_${version}_tmpXXX)
 
 	printf '0\n0\n0\n' >"${globstatsfile=$(mktemp --tmpdir XXX)}"  # file where stats are wrote - to allow edit in subshells since we use `parallel`; 1st line is saved bytes, 2nd is input files size, 3rd is nbr input files
@@ -253,7 +253,7 @@ parseArgs() {  # not using `local` vars because this fct is only executed once
 		# TODO parallel --noswap
 		# TODO parallel --load to not start job if current cpu load is above x
 		# TODO parallel --delay (makes sense to use only with --load)
-		realpath -z -- "$@" | { cd /; parallel --xargs -q0 find {} -type f ${globfilemask+-name "$globfilemask"} -printf '%s\0%P\0%H\0' | { [ -v globnosort ] && cat || sortFilesBySize;} | parallel -j${globjobs-100%} -0L3 --lb --bar compressFile {2} {3} {1}; cd - >/dev/null;}
+		realpath -z -- "$@" | { cd /; parallel --xargs -q0 find {} -type f ${globfilemask+-name "$globfilemask"} -printf '%s\0%P\0%H\0' | { [ -v globnosort ] && cat || sortFilesBySize;} | parallel -j${globjobs-100%} -0L3 --lb --bar compressFile {2} {3} {1}; cd ~-;}
 		# Thanks for the people helping me finding a way to sort by filesize (sorting by group of 3 elements): https://stackoverflow.com/a/76028193/13227011
 		# TODO don't compressFile duplicates (explicitly twice same input or implicitely - with the file and the parent folder)
 
@@ -432,7 +432,7 @@ compressFile() {
 				base64 -d >"$tmp" <<<UEsFBgAAAAAAAAAAAAAAAAAAAAAAAA==  # empty zip
 				zip -9rDq "$tmp" . |& grep -v 'zip error: Nothing to do!'  # -D to not add dirs; -9 forces everything > ~64 bytes to be compressed with Deflate (even if output is bigger) - useful as ect will NOT compress uncompressed files (and if Deflate stream is bigger than input data, ect will store the file uncompressed)
 				find . -type d -empty -print0 | xargs -r0 zip -q "$tmp"
-				cd - >/dev/null
+				cd ~-
 				rm -r "$v"
 				ect -${zipinsane+8019}9 -quiet -zip --strict --mt-deflate "$tmp"  # using --strict makes sure ECT does not try to optimize archived files (so it will only optimize Deflate compression in ZIP, not embedded files themselves)
 			fi
