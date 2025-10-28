@@ -346,13 +346,12 @@ compressID3() {  # tested also tone and eyeD3; eyeD3 would be nice but python (a
 	fi
 }
 
-# TODOOOOOOOOOOOOOOOO instead of no $3 if this is a subcall, use $SHLVL !!!!!!!!!!!!!!
-# $1=filepath	$2=prefixpath	$3=filesize		("$2/$1" = full absolute input path)	(do NOT set $3 when this is a subcall from another compressFile - e.g. when compressFile a file from an extracted ZIP file); none can have spaces
-compressFile() {	# warning: $1 can be empty
-	[[ ! $3 && -v globnoextract ]] && return  # if this is a subcall compressFile and globnoextract is set, then do not optimize this file (as it's an embedded one)
-	set -a  # export everything automaticall (e.g. sub-parallel calls)
+# $1=filepath	$2=prefixpath	$3=filesize		("$2/$1" = full absolute input path; warning: $1 can be empty)
+compressFile() {
+	[[ -v inTopLevel && -v globnoextract ]] && return  # do not optimize the file if embedded and --glob-noextract is set
+	set -a  # export everything automaticall (e.g. for sub-parallel calls)
 	local a p v  # variables for temporary/intermediate values, ONLY SET THEM IN THE CASE SWITCH
-	local atime mtime umask size in=$2${1:+${2:+/}}$1 tmp out
+	local atime mtime umask size size_tmp in=$2${1:+${2:+/}}$1 isEmbeddedFile tmp out
 	atime=$(stat -c%x "$in")
 	mtime=$(stat -c%y "$in")
 	umask=$(stat -c%a "$in")
@@ -360,14 +359,17 @@ compressFile() {	# warning: $1 can be empty
 	tmp=$(mktemp -p"$PWD" --suff=."${in##*/}" XXX)  # always use tmp, so in!=tmp
 	#TODO check if $TMPDIR has enough free mem
 	out=$in
-	[ $3 ] && local inParent=$in
-	[[ $3 && -v globoutput ]] && out=$globoutput/${2##*/}${1:+/$1}
-	[[ $3 && -v globprefix ]] && out=${out%/*}/$globprefix${out##*/}
-	if [[ $3 && (-v globoutput || -v globprefix) && ! -v globupdate && -e "$out" ]]
-	then warning "'$out' already exists, file not compressed nor updated." 'Rerun with -f to overwrite files in output directory, or with -p to add a prefix.'
-		cd /
-		rm -r "${tmp%/*}"
-		return
+	if [ -v inTopLevel ]
+	then isEmbeddedFile=
+	else inTopLevel=$in
+		[ -v globoutput ] && out=$globoutput/${2##*/}${1:+/$1}
+		[ -v globprefix ] && out=${out%/*}/$globprefix${out##*/}
+		if [[ (-v globoutput || -v globprefix) && ! -v globupdate && -e "$out" ]]
+		then warning "'$out' already exists, file not compressed nor updated." 'Rerun with -f to overwrite files in output directory, or with -p to add a prefix.'
+			cd /
+			rm -r "${tmp%/*}"
+			return
+		fi
 	fi
 	size=${3-$(wc -c <"$in")}
 
@@ -581,19 +583,19 @@ compressFile() {	# warning: $1 can be empty
 			#upx -9 --ultra-brute -o out in
 			cp "$in" "$tmp";;  # TODO also cp in -> tmp IF THERE IS ANY ERROR (what about set -e or something like that?)
 	esac
-	((size_tmp=$(wc -c <"$tmp"),(size-=size_tmp)<=0)) && { info "'$in'$([ $3 ] || echo " (embedded file from '$inParent')"): could not compress further. Input file was kept."; cp "$in" "$tmp"; size=0;}
-	((size_tmp)) || { warning "'$in'$([ $3 ] || echo " (embedded file from '$inParent')"): empty output! Report the issue. Input file was kept."; cp "$in" "$tmp"; size=0;}
+	((size_tmp=$(wc -c <"$tmp"),(size-=size_tmp)<=0)) && { info "'$in'$([ -v isEmbeddedFile ] && echo " (embedded file from '$inTopLevel')"): could not compress further. Input file was kept."; cp "$in" "$tmp"; size=0;}
+	((size_tmp)) || { warning "'$in'$([ -v isEmbeddedFile ] && echo " (embedded file from '$inTopLevel')"): empty output! Report the issue. Input file was kept."; cp "$in" "$tmp"; size=0;}
 	chmod $umask "$tmp"
 	[ -v globkeeptime ] && touch -md"$mtime" "$tmp" && touch -ad"$atime" "$tmp"
-	if [ $3 ]
-	then sem --fg --id "$globstatsfile" 'set -- $(<"$globstatsfile"); printf "$(('$size'+$1))\n$(('$3'+$2))\n$((1+$3))\n" >"$globstatsfile"'  # use a semaphore to allow only one thread to write stats at a time
+	if [ -v isEmbeddedFile ]
+	then mv "$tmp" "$out"
+	else sem --fg --id "$globstatsfile" 'set -- $(<"$globstatsfile"); printf "$(('$size'+$1))\n$(('$3'+$2))\n$((1+$3))\n" >"$globstatsfile"'  # use a semaphore to allow only one thread to write stats at a time
 		if [[ -v globoutput && ! -v globupdate && -e "$out" ]]
 		then warning "'$out' already exists, not updated. Compressed version here: '$tmp'." 'Rerun with -f to overwrite files in output directory, or with -p to add a prefix.'  # TODO not remove with below rm -r
 		else mv "$tmp" "$out"
 			chown -f --reference="$in" "$out"
 			chmod -f --reference="$in" "$out"
 		fi
-	else mv "$tmp" "$out"
 	fi
 	cd /
 	rm -r "${tmp%/*}"
