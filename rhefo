@@ -18,7 +18,6 @@
 # for `dd`, if writing to existing output file, `dd status=none bs=4 count=1 seek=6 conv=notrunc oflag=seek_bytes iflag=fullblock of="$tmp"`
 
 # features to add, fixes needed, etc are written with a 'TODO' in capital letters; 'todo' is written for stuff to change with very very low priority (mainly a nice thing to have, but almost useless because too rare), everything completely works without issues even with 'todo'
-# formats (mime-types) which are completely finished and supported are marked 'DONE'
 
 
 # TODO begin each section in case switch with a test (like some outputs of PDFs can be empty bc input is not supported or broken)
@@ -254,8 +253,6 @@ parseArgs() {  # not using `local` vars because this fct is only executed once
 		# TODO parallel --load to not start job if current cpu load is above x
 		# TODO parallel --delay (makes sense to use only with --load)
 		realpath -z -- "$@" | { cd /; parallel --xargs -q0 find {} -type f ${globfilemask+-name "$globfilemask"} -printf '%s\0%P\0%H\0' | { [ -v globnosort ] && cat || sortFilesBySize;} | parallel -j${globjobs-100%} -0L3 --lb --bar compressFile {2} {3} {1}; cd ~-;}
-		# Thanks for the people helping me finding a way to sort by filesize (sorting by group of 3 elements): https://stackoverflow.com/a/76028193/13227011
-		# TODO don't compressFile duplicates (explicitly twice same input or implicitely - with the file and the parent folder)
 
 		((s=SECONDS, h=s/3600, m=s/60-h*60, s%=60))
 		set -- $(<"$globstatsfile")
@@ -282,7 +279,7 @@ threadlimit() {
 
 # input should be `find -printf '%s\0%P\0%H\0'`, output will be sorted with largest %s first
 sortFilesBySize() {
-	perl -0ne 'push @rec, $_; if ($#rec == 2) { push @items, join("", @rec); @rec = (); } END { print(join("", sort { $b <=> $a } @items)) }'
+	perl -0ne 'push @rec, $_; if ($#rec == 2) { $key = join("/", @rec[1] eq "\0" ? @rec[2] : @rec[2,1]) =~ tr/\0//dr; if (exists $set{$key}) { system("bash", "-c", q{warning "'\''$0'\'': skipping file optimization from input argument '\''$1'\'', as it is already covered by another one."}, $key, @rec[2]); } else { @set{$key} = (); push @items, join("", @rec); @rec = (); }; } END { print(join("", sort { $b <=> $a } @items)) }'
 }
 
 # TODO better to change these2= 2 fct to only support reading data from stdin ?
@@ -375,7 +372,7 @@ compressFile() {
 
 	# TODO if mime=application/octet-stream, use FFmpeg to try to get the container name (or use a file mapping filextensions to mime-type)
 	case $(file -b --mime-type "$in") in  # see here for known MIME types: /usr/share/mime/types
-		application/gzip | application/x-gzip)	# DONE
+		application/gzip | application/x-gzip)
 			# tested tools: zopfli, zopfli MrKrzYch00's mod, gzip, 7z, minigzip (from minizip-ng). Tested on all files from silesia.tar (ect is far faster than zopfli(mod), and always gives smaller files - even when file is 1KB; ECT << zopfli < zopfli_mrkrzych00 << gzip); zopfli_mrkrzych00 --i9999 --mui999 --slowfix --t0 --pass9 --all androidsdk.svg
 			p=$(gzip -Nl "$in")
 			p=${p##*/}  # p= original decomp filename
@@ -533,7 +530,7 @@ compressFile() {
 			# TODO add -arithmetic coding with $jpgbroken
 			if [ -v jpeginsane ]
 			then jpegultrascan.pl -qib3 -t$(nproc) -pjpegtran_ijg -ojpegtran_moz "$in" "$tmp"  # -b3 is really rarely beaten by high numbers
-			else jpegtran_moz -copy all -outfile "$tmp" "$in" && ect -9 -progressive -quiet "$tmp"
+			else jpegtran_moz -copy all -outfile "$tmp" "$in" && ect -9 -progressive -quiet --disable-png "$tmp"
 			fi
 			[ "$(exiftool -icc_profile:ProfileDescription -T "$tmp")" = 'sRGB IEC61966-2.1' ] && exiftool -q -q -icc_profile:all= -overwrite_original "$tmp"  # rm ICC if it's the std one
 			[ -v globstrip ] && exiftool -all= --icc_profile:all -q -overwrite_original "$tmp";;  # rm all except ICC
