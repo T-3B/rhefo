@@ -65,11 +65,12 @@
 set -a  # export var+fct automatically
 set -m  # All processes run in a separate process group (needed for Ctrl+C "trick")
 version=0.0.1
+PARALLEL=--lb
 
 command_not_found_handle() {
 	warning "$1: command not found." 'Install the needed package and this script will resume automatically.'
 	until command -v "$1" >/dev/null
-	do sleep 3;
+	do sleep 3
 	done
 	info "$1: found! Resuming optimization."
 	"$@"
@@ -252,7 +253,7 @@ parseArgs() {  # not using `local` vars because this fct is only executed once
 		# TODO parallel --noswap
 		# TODO parallel --load to not start job if current cpu load is above x
 		# TODO parallel --delay (makes sense to use only with --load)
-		realpath -z -- "$@" | { cd /; parallel --xargs -q0 find {} -type f ${globfilemask+-name "$globfilemask"} -printf '%s\0%P\0%H\0' | { [ -v globnosort ] && cat || sortFilesBySize;} | parallel -j${globjobs-100%} -0L3 --lb --bar compressFile {2} {3} {1}; cd ~-;}
+		realpath -z -- "$@" | { cd /; parallel --xargs -q0 find {} -type f ${globfilemask+-name "$globfilemask"} -printf '%s\0%P\0%H\0' | { [ -v globnosort ] && cat || sortFilesBySize;} | parallel -j${globjobs-100%} -0L3 --bar compressFile {2} {3} {1}; cd ~-;}
 
 		((s=SECONDS, h=s/3600, m=s/60-h*60, s%=60))
 		set -- $(<"$globstatsfile")
@@ -357,7 +358,7 @@ compressFile() {
 	#TODO check if $TMPDIR has enough free mem
 	out=$in
 	if [ -v inTopLevel ]
-	then isEmbeddedFile=
+	then isEmbeddedFile=" (embedded file from '$inTopLevel')"
 	else inTopLevel=$in
 		[ -v globoutput ] && out=$globoutput/${2##*/}${1:+/$1}
 		[ -v globprefix ] && out=${out%/*}/$globprefix${out##*/}
@@ -465,7 +466,7 @@ compressFile() {
 				# extract pictures (pics themselves and blocks), filenames written to array 'a'
 				parallel 'metaflac --block-number={} --export-picture-to="$tmp".{} "$tmp"; metaflac --block-number={} --list --data-format=binary "$tmp" >"$tmp".{}.block' ::: $a
 				metaflac --remove --block-type=PICTURE "$tmp"  # remove pics, since we append them later
-				parallel --lb 's=$(wc -c <"$tmp".{}); [ -v flaclossy ] && export globstrip=; compressFile "$tmp".{}; t=$(wc -c <"$tmp".{}); { intToBytes $((0x$(getBytes "" 0 4)-s+t)) 4; head -c $(($(wc -c <"$tmp".{}.block)-s-8)); intToBytes $t 4; cat "$tmp".{};} <"$tmp".{}.block >"$tmp".{}.blockNew; rm "$tmp".{}{,.block}' ::: $a & # compress PICTURES in parallel with --glob-strip; Taking the first 4 bytes as block length even if the first one isn't, easier to implement and works. We update block length, image data length and image data.
+				parallel 's=$(wc -c <"$tmp".{}); [ -v flaclossy ] && export globstrip=; compressFile "$tmp".{}; t=$(wc -c <"$tmp".{}); { intToBytes $((0x$(getBytes "" 0 4)-s+t)) 4; head -c $(($(wc -c <"$tmp".{}.block)-s-8)); intToBytes $t 4; cat "$tmp".{};} <"$tmp".{}.block >"$tmp".{}.blockNew; rm "$tmp".{}{,.block}' ::: $a & # compress PICTURES in parallel with --glob-strip; Taking the first 4 bytes as block length even if the first one isn't, easier to implement and works. We update block length, image data length and image data.
 				# now the {}.blockNew contains the opt picture, with correct size. todo Colors (the 4 bytes just before pic size) could be changed for example by ECT. Colors are the number of indexed colors; tried and everything works on PC if it's not updated; we could use `identify -verbose "$tmp"` and look at "Colormap entries:", if not in output then not indexed (at least for PNG), would add a dependency I don't want. Could also remove all block from FLAC, try to import pic and let FLAC figure it out (Colors) for me then copy (too much work for what it brings)
 			fi
 			# -j only available from 1.5.0
@@ -571,17 +572,18 @@ compressFile() {
 				mv "$tmp.png" "$tmp"
 			fi;;
 		image/webp)  # only tested cwebp; cwebp -z9 is NOT always the smallest one! Therefore just bruteforce -z (which is an alias for -m and -q options)
-			if webpinfo "$in" | grep -q 'Format: Lossless (2)'
+			if [ "$(exiftool -T -s -FileType "$in")" = 'WEBP (lossless)' ]
 			then parallel cwebp -quiet -lossless -alpha_filter best -metadata ${globstrip+icc}${globstrip-all} -z {} "$in" -o "$tmp".{} ::: {0..9}
 				catchSmallestFile "$tmp".*
+			else cp "$in" "$tmp"
 			fi;;
 		*)
 			# application/x-executable (TODO test if this MIME type is the only one for executables)
 			#upx -9 --ultra-brute -o out in
 			cp "$in" "$tmp";;  # TODO also cp in -> tmp IF THERE IS ANY ERROR (what about set -e or something like that?)
 	esac
-	((size_tmp=$(wc -c <"$tmp"),(size-=size_tmp)<=0)) && { info "'$in'$([ -v isEmbeddedFile ] && echo " (embedded file from '$inTopLevel')"): could not compress further. Input file was kept."; cp "$in" "$tmp"; size=0;}
-	((size_tmp)) || { warning "'$in'$([ -v isEmbeddedFile ] && echo " (embedded file from '$inTopLevel')"): empty output! Report the issue. Input file was kept."; cp "$in" "$tmp"; size=0;}
+	((size_tmp=$(wc -c <"$tmp"),(size-=size_tmp)<=0)) && { info "'$in'$isEmbeddedFile: could not compress further. Input file was kept."; cp "$in" "$tmp"; size=0;}
+	((size_tmp)) || { warning "'$in'$isEmbeddedFile: empty output! Report the issue. Input file was kept."; cp "$in" "$tmp"; size=0;}
 	chmod $umask "$tmp"
 	[ -v globkeeptime ] && touch -md"$mtime" "$tmp" && touch -ad"$atime" "$tmp"
 	if [ -v isEmbeddedFile ]
@@ -600,7 +602,7 @@ compressFile() {
 
 # only one argument, the folder where we extracted the archive contents
 compressTmpFolder() {
-	[ -v globnoextract ] || find "$1" -type f -printf '%s\0%P\0%H\0' | sortFilesBySize | parallel -0L3 --lb globkeeptime= compressFile {2} {3}
+	[ -v globnoextract ] || find "$1" -type f -printf '%s\0%P\0%H\0' | sortFilesBySize | parallel -0L3 globkeeptime= compressFile {2} {3} {1}
 }
 
 info() { printf '\r\033[1;36mI: %s\033[0m\n' "$@";}
