@@ -238,10 +238,11 @@ parseArgs() {  # not using `local` vars because this fct is only executed once
 	for i do [ -r "$i" ] || error "Input '$i' does not exist or cannot read it."; done
 
 	# create all the dir-tree to output folder
-	[ -v globoutput ] && { for i do [ -d "$i" ] && { [ "${globoutput#$(realpath -- "$i")}" = "$globoutput" ] || error "The --glob-output folder can't be inside an input folder."; cd -- "$i"; find . -type d -exec mkdir -p "$globoutput/$(basename "$(realpath -- "$i")")/{}" \;; cd ~-;}; done;}
+	[ -v globoutput ] && { for i do [ -d "$i" ] && { [ "${globoutput#$(realpath -- "$i")}" = "$globoutput" ] || error "The --glob-output folder can't be inside an input folder."; cd -- "$i"; find . -type d -exec mkdir -p "$globoutput/$(basename "$i")/{}" \;; cd ~-;}; done;}
 	TMPDIR=$(mktemp --tmpdir -d .rhefo_${version}_tmpXXX)
 
 	echo '0 0 0' >"${globstatsfile=$(mktemp --tmpdir XXX)}"  # file where stats are wrote - to allow edit in subshells since we use `parallel`; 1st line is saved bytes, 2nd is input files size, 3rd is nbr input files
+	# TODO add nbr of skipped files
 
 	addinsDir=$(mktemp -dp/tmp rhefo_${version}_tmpXXX)  # use /tmp for temp dir because we don't want weird chars (like ':') since we add it to PATH
 	PATH=$addinsDir:$PATH
@@ -268,7 +269,7 @@ extractAddins() {
 	dd status=none bs=4k iflag=fullblock iflag=skip_bytes skip=$((6+$(grep -bm1 '^#EOF#$' "$(realpath -- "$BASH_SOURCE")" | cut -f1 -d:))) <"$(realpath -- "$BASH_SOURCE")" | base64 -d | tar xC "$1"
 }
 
-# restrict this script to use the $1 *least used* CPU processors
+# restrict this script to use the $1 *least used* CPU processors  # TODO prioritize distribution over physical core (avoid hyperthreading cores if possible)
 threadlimit() {
 	# sum idle ($4) and io-wait ($5) ticks, substract between 2 reads (5 sec between), take $1 biggest numbers (will be our cpu threads to use with taskset)
 	# could have used `taskset -acp 0-$(($1-1)) $$`, but doesn't "work" if > 1 instance of RHEFO is running
@@ -309,6 +310,9 @@ catchSmallestFile() {
 	mv "$a" "${a%.*}"
 	rm -f "$@"  # -f to not print err msg, since there's a missing file ("$a") 
 }
+
+# strip image (rm all except ICC) and write to output if globstrip is set; exit code=1 if didn't strip	$1=input	$2=output	(if $#=1, update input inplace)
+imageStrip() { [ -v globstrip ] && exiftool -all= --icc_profile:all -q ${2+-o "$2"} ${2--overwrite_original} "$1";}
 
 ver_lte() { sort -CV <<<"$1"$'\n'"$2";}
 
@@ -534,7 +538,7 @@ compressFile() {
 			else jpegtran_moz -copy all -outfile "$tmp" "$in" && ect -9 -progressive -quiet --disable-png "$tmp"
 			fi
 			[ "$(exiftool -icc_profile:ProfileDescription -T "$tmp")" = 'sRGB IEC61966-2.1' ] && exiftool -q -q -icc_profile:all= -overwrite_original "$tmp"  # rm ICC if it's the std one
-			[ -v globstrip ] && exiftool -all= --icc_profile:all -q -overwrite_original "$tmp";;  # rm all except ICC
+			imageStrip "$tmp";;
 		image/jxl)
 			# -e 10 needs libjxl 0.8.0
 			# cjxl -e 9 -d 0 --brotli_effort=11 -I 100 -g 3 -E 11
@@ -563,6 +567,7 @@ compressFile() {
 			# TODO pngout apparently can sometimes do better: Just running pngout followed by pngout /f0 will result in the optimal compression; set the size manually can help Low entropy = High values, High entropy = Small values
 			# TODO see (or better version than) optipng -fix -f 5 -i 0 -zc 9 -zm 9 -zs 0-3 -zw 32k -nb -nc -np -nx "$file"
 			# TODO pingo is really great for images with alpha, BUT WILL ALWAYS OUTPUT TO 8bpc
+			# TODO try oxipng
 			if [ $(ffprobe -v warning -show_entries stream=codec_name -of default=nk=1:nw=1 "$in") = apng ]
 			then # ect -1 ${globstrip+-strip} "$tmp"  # TODO (cannot strip using ECT since it drops all other frames - only 1st one is kept)
 				apngopt -z2 -i99${pnginsane+999} "$in" "$tmp" >/dev/null  # TODO to do better, we could split frames, use ECT --reuse, them remux   ;; TODO try pingo
@@ -575,9 +580,11 @@ compressFile() {
 			if [ "$(exiftool -T -s -FileType "$in")" = 'WEBP (lossless)' ]
 			then parallel cwebp -quiet -lossless -alpha_filter best -metadata ${globstrip+icc}${globstrip-all} -z {} "$in" -o "$tmp".{} ::: {0..9}
 				catchSmallestFile "$tmp".*
-			else cp "$in" "$tmp"
+			else imageStrip "$in" "$tmp" || cp "$in" "$tmp"  # TODO imageStrip for lossless
+				# [ "$(exiftool -icc_profile:ProfileDescription -T "$tmp")" = 'sRGB IEC61966-2.1' ] && exiftool -q -q -icc_profile:all= -overwrite_original "$tmp"  # rm ICC if it's the std one # TODO remove ICC if std, but search first what is the std one
+				:
 			fi;;
-		*)
+		*)	# for zstd, highest level -22 not alway give smallest output
 			# application/x-executable (TODO test if this MIME type is the only one for executables)
 			#upx -9 --ultra-brute -o out in
 			cp "$in" "$tmp";;  # TODO also cp in -> tmp IF THERE IS ANY ERROR (what about set -e or something like that?)
