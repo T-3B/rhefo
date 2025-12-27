@@ -123,7 +123,6 @@ List of options (global ones first, then grouped by file type):
   if set, strip/remove ALL metadata/exif; see the less aggressive --glob-lossy
 --glob-threads=<N> | -t<N>
   <N> logic cpu processors used by this script; default: all (see --glob-jobs)
-  more threads mean more RAM usage, no impact on output filesize
 --glob-tmp=<path>
   <path> is a directory intensively used for r/w; default is `/dev/shm`
   if does not exist, or cannot r/w in it, defaults to `/tmp`
@@ -176,7 +175,7 @@ rhefo .
 # optimize as much as possible (TAKES TIME!!!) recursively current dir, inplace,
 # keep timestamps and remove some useless metadata
 rhefo -9kl .
-# optimize with only 2 threads, and copy /indir *inside* /outdir
+# optimize with only 2 concurrent jobs, and copy /indir *inside* /outdir
 rhefo -o /outdir -j2 /indir
 # optimize 2 files with default settings and write output to an existing /outdir
 rhefo -o /outdir <firstFile> <secondFile>
@@ -241,8 +240,7 @@ parseArgs() {  # not using `local` vars because this fct is only executed once
 	[ -v globoutput ] && { for i do [ -d "$i" ] && { [ "${globoutput#$(realpath -- "$i")}" = "$globoutput" ] || error "The --glob-output folder can't be inside an input folder."; cd -- "$i"; find . -type d -exec mkdir -p "$globoutput/$(basename "$i")/{}" \;; cd ~-;}; done;}
 	TMPDIR=$(mktemp --tmpdir -d .rhefo_${version}_tmpXXX)
 
-	echo '0 0 0' >"${globstatsfile=$(mktemp --tmpdir XXX)}"  # file where stats are wrote - to allow edit in subshells since we use `parallel`; 1st line is saved bytes, 2nd is input files size, 3rd is nbr input files
-	# TODO add nbr of skipped files
+	echo '0 0 0 0' >"${globstatsfile=$(mktemp --tmpdir XXX)}"  # file where stats are wrote - to allow edit in subshells since we use `parallel`; 1st = saved bytes, 2nd = total input files size, 3rd = nbr of optimized files, 4th = nbr of skipped files
 
 	addinsDir=$(mktemp -dp/tmp rhefo_${version}_tmpXXX)  # force /tmp usage instead of TMPDIR, because it cannot contains ':' char since we add it to PATH
 	PATH=$addinsDir:$PATH
@@ -258,7 +256,7 @@ parseArgs() {  # not using `local` vars because this fct is only executed once
 
 		((s=SECONDS, h=s/3600, m=s/60-h*60, s%=60))
 		set -- $(<"$globstatsfile")
-		info "$(printf "Congrats! Processed %d files in %s and saved %sB (%.3f%%)!\a" $3 $( ((h)) && printf ${h}h; ((m)) && printf ${m}m)${s}s $(numfmt --to=iec-i --format="%.2f" $1) $((1000000*$1/($2?$2:1)))e-4)"
+		info "$(printf "Congrats! Optimized %d files, skipped %d, and saved %sB (%.3f%%) in %s!\a" $3 $4 $(numfmt --to=iec-i --format="%.2f" $1) $((1000000*$1/($2?$2:1)))e-4  $( ((h)) && printf ${h}h; ((m)) && printf ${m}m)${s}s)"
 		rm -r "$globstatsfile" "$addinsDir" "$TMPDIR"
 	} &  # all the code is done in background so it won't be killed by Ctrl+C
 	until wait; do :; done  # each Ctrl+C will kill `wait` (1st hit: no new job, 2nd: kill parallel)  # TODO remove --bar from parallel and print stuff ourself (including saved bytes/%)
@@ -315,6 +313,12 @@ threadlimit() {
 			print join ",", keys %chosen;
 		}
 	') $$ >/dev/null
+}
+
+# $1=filesize saved	$2=input filesize
+# uses a semaphore to allow only one thread at a time to write stats; $1==0 is considered as a skipped file, optimized otherwise
+globstats_update() {
+	sem --fg --id "$globstatsfile" 'set -- $(<"$globstatsfile"); echo "$(($1+'$1')) $(($2+'$2')) $(($3+('$1'!=0))) $(($4+! '$1'))" >"$globstatsfile"'
 }
 
 # stdin=find -printf '%s\0%P\0%H\0', output sorted with largest %s first
@@ -412,6 +416,7 @@ compressFile() {
 		then warning "'$out' already exists, file not compressed nor updated." 'Rerun with -f to overwrite files in output directory, or with -p to add a prefix.'
 			cd /
 			rm -r "${tmp%/*}"
+			globstats_update 0 $3
 			return
 		fi
 	fi
@@ -634,16 +639,15 @@ compressFile() {
 	((size_tmp=$(wc -c <"$tmp"),(size-=size_tmp)<=0)) && { info "'$in'$isEmbeddedFile: could not compress further. Input file was kept."; cp "$in" "$tmp"; size=0;}
 	((size_tmp)) || { warning "'$in'$isEmbeddedFile: empty output! Report the issue. Input file was kept."; cp "$in" "$tmp"; size=0;}
 	chmod $umask "$tmp"
-	[ -v globkeeptime ] && touch -md"$mtime" "$tmp" && touch -ad"$atime" "$tmp"
+	[ -v globkeeptime ] && { touch -md"$mtime" "$tmp"; touch -ad"$atime" "$tmp";}
 	if [ -v isEmbeddedFile ]
 	then mv "$tmp" "$out"
-	else sem --fg --id "$globstatsfile" 'set -- $(<"$globstatsfile"); echo "$(('$size'+$1)) $(('$3'+$2)) $((1+$3))" >"$globstatsfile"'  # use a semaphore to allow only one thread to write stats at a time
-		if [[ -v globoutput && ! -v globupdate && -e "$out" ]]
-		then warning "'$out' already exists, not updated. Compressed version here: '$tmp'." 'Rerun with -f to overwrite files in output directory, or with -p to add a prefix.'  # TODO not remove with below rm -r
-		else mv "$tmp" "$out"
-			chown -f --reference="$in" "$out"
-			chmod -f --reference="$in" "$out"
-		fi
+	elif [ "$(mv -v$([[ "$in" = "$out" || -v globupdate ]] || echo n) "$tmp" "$out")" ]  # `mv -v` prints nothing if nothing is done; using this to avoid race conditions by checking file existence then mv
+	then chown -f --reference="$in" "$out"
+		chmod -f --reference="$in" "$out"
+		globstats_update $size $3
+	else warning "'$out' already exists, not updated. Compressed version here: '$tmp'." 'Rerun with -f to overwrite files in output directory, or with -p to add a prefix.'  # TODO not remove with below rm -r
+		globstats_update 0 $3
 	fi
 	cd /
 	rm -r "${tmp%/*}"
