@@ -269,19 +269,57 @@ extractAddins() {
 	dd status=none bs=4k iflag=fullblock iflag=skip_bytes skip=$((6+$(grep -bm1 '^#EOF#$' "$(realpath -- "$BASH_SOURCE")" | cut -f1 -d:))) <"$(realpath -- "$BASH_SOURCE")" | base64 -d | tar xC "$1"
 }
 
-# $1=max number of CPU processors to use  # TODO prioritize distribution over physical core (avoid hyperthreading cores if possible)
+# $1=max number of CPU processors to use
+# Limit current RHEFO instance to only use $1 maximum threads by setting a CPU affinity (so future `nproc` will give $1). A thread is preferred over others if (by priority) it is not used by another RHEFO, it has a bigger idle time (integer from 0 to 3), or if it is physically on another CPU core.
 threadlimit() {
-	# sum idle ($4) and io-wait ($5) ticks, substract between 2 reads (5 sec between), take $1 biggest numbers (will be our cpu threads to use with taskset)
-	# could have used `taskset -acp 0-$(($1-1)) $$`, but doesn't "work" if > 1 instance of RHEFO is running
-	[ $(nproc) = $(nproc --all) ] || { warning 'This script does NOT have access to all cpu threads, ignoring --glob-threads.'; return;}
+	local wanted=$1 nproc=$(nproc) clk_tck=$(getconf CLK_TCK)
+	[ $nproc = $(nproc --all) ] || { warning 'This script does NOT have access to all cpu threads, ignoring --glob-threads.'; return;}
 
-	taskset -acp $(paste <(awk '/^cpu[0-9]/{print $4+$5}' /proc/stat) <(sleep 5; awk '/^cpu[0-9]/{print $4+$5}' /proc/stat) \
-					| awk '{print $2-$1, NR-1}' | sort -n | tail -$1 | cut -d' ' -f2 | paste -sd,) $$ >/dev/null
+	pids_of_other_rhefos=$(a=$BASHPID; pgrep -x rhefo | grep -vwe $$ -e $a)
+	taskset -acp $(cat /sys/devices/system/cpu/cpu*/topology/thread_siblings_list | perl -MEnv=nproc,wanted,pids_of_other_rhefos,clk_tck -e '
+		sub get_cpu_idle_times {
+			my %stats;
+			open(my $fh, "<", "/proc/stat");
+			while (<$fh>) {
+				if (/^cpu(\d+)\s+\d+\s+\d+\s+\d+\s+(\d+)\s+(\d+)/) {
+					$stats{$1} = $2 + $3;  # $stats{$cpu_id} = $idle + $iowait;
+				}
+			}
+			close($fh);
+			return %stats;
+		}
+		
+		@free{0..($nproc-1)} = ();  # get a set of threads not taken by other RHEFO instances
+		for my $pid (split " ", $pids_of_other_rhefos) {
+			qx(taskset -cp $pid) =~ /:\s+(.*)/;
+			for (split ",", $1) {
+				delete @free{/(\d+)-(\d+)/ ? ($1..$2) : ($_)};
+			}
+		}
+
+		if (%free == $wanted) {
+			print join ",", keys %free;
+		} else {
+			while (<>) {  # read stdin to build a set of threads that are on different cores
+				chomp;
+				@spread_threads{substr($_, 0, index($_, ","))} = ();
+			}
+			%start_times = get_cpu_idle_times();
+			sleep 3;
+			%end_times = get_cpu_idle_times();
+			# the threads this RHEFO instance will use are chosen preferrably based on (by priority): not used by another RHEFO, biggest idle time (0..3), separate core.
+			foreach (sort { exists $free{$b} <=> exists $free{$a} or int(($end_times{$b} - $start_times{$b}) / $clk_tck + 0.5) <=> int(($end_times{$a} - $start_times{$a}) / $clk_tck + 0.5) or exists $spread_threads{$b} <=> exists $spread_threads{$a} } 0..($nproc-1)) {
+				last if (%chosen >= $wanted);
+				@chosen{$_} = ();
+			}
+			print join ",", keys %chosen;
+		}
+	') $$ >/dev/null
 }
 
 # stdin=find -printf '%s\0%P\0%H\0', output sorted with largest %s first
 sortFilesBySize() {
-	perl -0ne 'push @rec, $_; if ($#rec == 2) { $key = join("/", @rec[1] eq "\0" ? @rec[2] : @rec[2,1]) =~ tr/\0//dr; if (exists $set{$key}) { system("bash", "-c", q{warning "'\''$0'\'': skipping file optimization from input argument '\''$1'\'', as it is already covered by another one."}, $key, @rec[2]); } else { @set{$key} = (); push @items, join("", @rec); @rec = (); }; } END { print(join("", sort { $b <=> $a } @items)) }'
+	perl -0ne 'push @rec, $_; if ($#rec == 2) { $key = join("/", @rec[1] eq "\0" ? @rec[2] : @rec[2,1]) =~ y/\0//dr; if (exists $set{$key}) { system("bash", "-c", q{warning "'\''$0'\'': skipping file optimization from input argument '\''$1'\'', as it is already covered by another one."}, $key, @rec[2]); } else { @set{$key} = (); push @items, join("", @rec); @rec = (); }; } END { print(join("", sort { $b <=> $a } @items)) }'
 }
 
 # TODO better to change these2= 2 fct to only support reading data from stdin ?
