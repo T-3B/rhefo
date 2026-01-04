@@ -145,6 +145,8 @@ List of options (global ones first, then grouped by file type):
   default is to store it only if archive is not `originalName.gz`
 --jpeg-insane		better compression, far slower (TODO benchmark)
   if set, bruteforce scans with both Moz/IJG jpegtran
+--jpeg-lossy		better compression, metalossy
+  if set and ICC is the standard sRGB IEC61966-2.1, remove it
 --mp3-lossy		better compression, metalossy
   if set, delete ID3v1 and copy it to ID3v2 if did not exist
 --ogg-lossy		better compression, metalossy
@@ -191,7 +193,7 @@ find -name "*.flac" -type f -print0 | rhefo -0o /outdir' |\
 parseArgs() {  # not using `local` vars because this fct is only executed once
 	[ $(printf '\1' | od -dAn) = 1 ] || error 'This script was not tested on BIG ENDIAN devices. I mainly use `printf %x`' 'with numbers of up to 4 bytes.' 'PLEASE, open an issue and if you have time HELP ME supporting this' 'architecture by simply testing! This would really help a lot, since I only' 'have little-endian devices. Seriously, please.'
 	getopt -T && { error 4 'Your `getopt` is not compatible with this script. Open an issue.';}
-	args=$(getopt -o hx:09j:klm:ESo:p:st:f -l help,extract-addins:,null,glob-downmix,glob-insane,glob-jobs:,glob-keeptime,glob-lossy,glob-filemask:,glob-noextract,glob-nosort,glob-output:,glob-prefix:,glob-strip,glob-threads:,glob-tmp:,glob-update,flac-insane,flac-lossy,flac-subset,gzip-insane,gzip-lossy,mp3-lossy,ogg-lossy,png-insane,zip-insane -n rhefo -s bash -- "$@")
+	args=$(getopt -o hx:09j:klm:ESo:p:st:f -l help,extract-addins:,null,glob-downmix,glob-insane,glob-jobs:,glob-keeptime,glob-lossy,glob-filemask:,glob-noextract,glob-nosort,glob-output:,glob-prefix:,glob-strip,glob-threads:,glob-tmp:,glob-update,flac-insane,flac-lossy,flac-subset,gzip-insane,gzip-lossy,jpeg-insane,jpeg-lossy,mp3-lossy,ogg-lossy,png-insane,zip-insane -n rhefo -s bash -- "$@")
 	(($?)) && error 'Could not parse args. See the help message `rhefo -h`.'
 	TMPDIR=/dev/shm  # mktemp uses directly TMPDIR, so set it instead of another variable globtmp (or we should specify this variable as an argument)
 	eval set -- "$args"
@@ -205,13 +207,13 @@ parseArgs() {  # not using `local` vars because this fct is only executed once
 			-9 | --glob-insane)		flacinsane=;gzipinsane=;jpeginsane=;pnginsane=;zipinsane=;;
 			-j | --glob-jobs)		((0<$2)) || error "Wrong jobs int: '$2'."; globjobs=$2; shift;;
 			-k | --glob-keeptime)	globkeeptime=;;
-			-l | --glob-lossy)		gziplossy=;flaclossy=;mp3lossy=;ogglossy=;;
+			-l | --glob-lossy)		gziplossy=;flaclossy=;jpeglossy=;mp3lossy=;ogglossy=;;
 			-m | --glob-filemask)	[ "$2" ] || error "Filemask is empty."; globfilemask=$2; shift;;
 			-E | --glob-noextract)	globnoextract=;;
 			-S | --glob-nosort)		globnosort=;;
 			-o | --glob-output) 	[[ -d "$2" || -w "$2" ]] || error "Output directory '$2' does not exist or cannot write to it."; globoutput=$(realpath -- "$2" 2>/dev/null); shift;;
 			-p | --glob-prefix)		[ "$2" ] || error 'Prefix is empty.'; globprefix=$2; shift;;
-			-s | --glob-strip)		globstrip=;gziplossy=;flaclossy=;mp3lossy=;ogglossy=;;
+			-s | --glob-strip)		globstrip=;gziplossy=;flaclossy=;jpeglossy=;mp3lossy=;ogglossy=;;
 			-t | --glob-threads)	((0<$2 && $2<=$(nproc --all))) || error "Wrong threads int: '$2'."; threadlimit $2; shift;;
 			--glob-tmp)				[[ -d "$2" && -r "$2" && -w "$2" ]] && TMPDIR=$(realpath -- "$2") || { warning 'Could not use given --glob-tmp, using "/tmp" instead.'; TMPDIR=/tmp;}; shift;;
 			-f | --glob-update)		globupdate=;;
@@ -221,6 +223,7 @@ parseArgs() {  # not using `local` vars because this fct is only executed once
 			--gzip-insane)			gzipinsane=;;
 			--gzip-lossy)			gziplossy=;;
 			--jpeg-insane)			jpeginsane=;;
+			--jpeg-lossy)			jpeglossy=;;
 			--mp3-lossy)			mp3lossy=;;
 			--ogg-lossy)			ogglossy=;;
 			--png-insane)			pnginsane=;;
@@ -256,7 +259,7 @@ parseArgs() {  # not using `local` vars because this fct is only executed once
 
 		((s=SECONDS, h=s/3600, m=s/60-h*60, s%=60))
 		set -- $(<"$globstatsfile")
-		info "$(printf "Congrats! Optimized %d files, skipped %d, and saved %sB (%.3f%%) in %s!\a" $3 $4 $(numfmt --to=iec-i --format="%.2f" $1) $((1000000*$1/($2?$2:1)))e-4  $( ((h)) && printf ${h}h; ((m)) && printf ${m}m)${s}s)"
+		info "$(printf "Optimized %d files, skipped %d, and saved %sB (%.3f%%) in %s!\a" $3 $4 $(numfmt --to=iec-i --format="%.2f" $1) $((1000000*$1/($2?$2:1)))e-4  $( ((h)) && printf ${h}h; ((m)) && printf ${m}m)${s}s)"
 		rm -r "$globstatsfile" "$addinsDir" "$TMPDIR"
 	} &  # all the code is done in background so it won't be killed by Ctrl+C
 	until wait; do :; done  # each Ctrl+C will kill `wait` (1st hit: no new job, 2nd: kill parallel)  # TODO remove --bar from parallel and print stuff ourself (including saved bytes/%)
@@ -357,7 +360,7 @@ catchSmallestFile() {
 }
 
 # $1=input	$2=output(optional)
-# strip image (rm all except ICC) and write to output if globstrip is set; exit code=1 if didn't strip
+# if globstrip is set, strip image (rm all except ICC) and write to output; returns 1 if didn't strip
 imageStrip() { [ -v globstrip ] && exiftool -all= --icc_profile:all -q ${2+-o "$2"} ${2--overwrite_original} "$1";}
 
 ver_lte() { sort -CV <<<"$1"$'\n'"$2";}
@@ -578,13 +581,14 @@ compressFile() {
 
 			# TODO for Exif editing: if $globstrip, remove everything except these to be completely lossless:
 			# - ColorSpace, InteropIndex, ICC_Profile, Orientation; maybe others ? See https://exiftool.org/TagNames/EXIF.html
+			# TODO perhaps can remove other "markers", but not everything, see "jpg_lots_of_metadata_HDR_Apple_ICC_....jpg"
 			# Try to `jpegtran -rotate x -perfect -outfile out.jpg in.jpg` with rotation written in Exif (WARNING may also be mirrored), will exit with $?=1 if not lossless transformation  (CHECK ALSO `ect -autorotate`)
 			# TODO add -arithmetic coding with $jpgbroken
 			if [ -v jpeginsane ]
 			then jpegultrascan.pl -qib3 -t$(nproc) -pjpegtran_ijg -ojpegtran_moz "$in" "$tmp"  # -b3 is really rarely beaten by high numbers
-			else jpegtran_moz -copy all -outfile "$tmp" "$in" && ect -9 -progressive -quiet --disable-png "$tmp"
+			else jpegtran_moz -copy all -outfile "$tmp" "$in" && ect -9 -progressive -quiet --disable-png "$tmp"  # TODO see input if needs .jpg (remove --disable-png or not?)
 			fi
-			[ "$(exiftool -icc_profile:ProfileDescription -T "$tmp")" = 'sRGB IEC61966-2.1' ] && exiftool -q -q -icc_profile:all= -overwrite_original "$tmp"  # rm ICC if it's the std one
+			[[ -v jpeglossy && "$(exiftool -icc_profile:ProfileDescription -T "$tmp")" = 'sRGB IEC61966-2.1' ]] && exiftool -q -q -icc_profile:all= -overwrite_original "$tmp"  # rm ICC if it's the std one
 			imageStrip "$tmp";;
 		image/jxl)
 			# -e 10 needs libjxl 0.8.0
