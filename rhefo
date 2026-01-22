@@ -67,6 +67,8 @@ set -m  # All processes run in a separate process group (needed for Ctrl+C "tric
 version=0.0.1
 PARALLEL=--lb
 
+trap ctrlCHandler INT  # Set up the Ctrl+C signal handler
+
 command_not_found_handle() {
 	warning "$1: command not found." 'Install the needed package and this script will resume automatically.'
 	until command -v "$1" >/dev/null
@@ -186,7 +188,7 @@ rhefo -o /outdir <firstFile> <secondFile>
 rhefo -o /outdir -m "*.flac" /indir
 # same as above, but flattened (no subdirectories in /outdir)
 find -name "*.flac" -type f -print0 | rhefo -0o /outdir' |\
-	GREP_COLORS=mt=\;33 grep --color=always -E '^--[[:alnum:]_-]+|$' | GREP_COLORS=mt=\;36 grep --color=always -P '(?<= \| )-\w|$' | GREP_COLORS=mt=\;32 grep --color=always 'better compression\|$' | GREP_COLORS=mt=\;31 grep --color=always 'worse compression\|compatibility issues\|$' | GREP_COLORS=mt=1 grep --color=always -P '(?<=, )metalossy|$' | GREP_COLORS=mt=\;35 grep --color=always '^#.*\|$'
+	GREP_COLORS=mt=\;33 grep --color=always -E '^--[[:alnum:]_-]+|$' | GREP_COLORS=mt=\;36 grep --color=always -P ' \| \K-\w|$' | GREP_COLORS=mt=\;32 grep --color=always 'better compression\|$' | GREP_COLORS=mt=\;31 grep --color=always 'worse compression\|compatibility issues\|$' | GREP_COLORS=mt=1 grep --color=always -P ', \Kmetalossy|$' | GREP_COLORS=mt=\;35 grep --color=always '^#.*\|$'
 )
 
 # Will parse arguments, and then start the whole optimization process (if no errors in the arguments)
@@ -244,6 +246,7 @@ parseArgs() {  # not using `local` vars because this fct is only executed once
 	TMPDIR=$(mktemp --tmpdir -d .rhefo_${version}_tmpXXX)
 
 	echo '0 0 0 0' >"${globstatsfile=$(mktemp --tmpdir XXX)}"  # file where stats are wrote - to allow edit in subshells since we use `parallel`; 1st = saved bytes, 2nd = total input files size, 3rd = nbr of optimized files, 4th = nbr of skipped files
+	printf '\033]0;RHEFO - 0%% - 0B saved\007'
 
 	addinsDir=$(mktemp -dp/tmp rhefo_${version}_tmpXXX)  # force /tmp usage instead of TMPDIR, because it cannot contains ':' char since we add it to PATH
 	PATH=$addinsDir:$PATH
@@ -255,14 +258,14 @@ parseArgs() {  # not using `local` vars because this fct is only executed once
 		# TODO parallel --noswap
 		# TODO parallel --load to not start job if current cpu load is above x
 		# TODO parallel --delay (makes sense to use only with --load)
-		realpath -z -- "$@" | { cd /; parallel --xargs -q0 find {} -type f ${globfilemask+-name "$globfilemask"} -printf '%s\0%P\0%H\0' | { [ -v globnosort ] && cat || sortFilesBySize;} | parallel -j${globjobs-100%} -0L3 --bar compressFile {2} {3} {1}; cd ~-;}
+		realpath -z -- "$@" | { cd /; parallel --xargs -q0 find {} -type f ${globfilemask+-name "$globfilemask"} -printf '%s\0%P\0%H\0' | { [ -v globnosort ] && cat || sortFilesBySize;} | parallel -j${globjobs-100%} -0L3 --bar --plus globtotaljobs={##} compressFile {2} {3} {1}; cd ~-;}
 
 		((s=SECONDS, h=s/3600, m=s/60-h*60, s%=60))
-		set -- $(<"$globstatsfile")
-		info "$(printf "Optimized %d files, skipped %d, and saved %sB (%.3f%%) in %s!\a" $3 $4 $(numfmt --to=iec-i --format="%.2f" $1) $((1000000*$1/($2?$2:1)))e-4  $( ((h)) && printf ${h}h; ((m)) && printf ${m}m)${s}s)"
+		read sav size opt skip <"$globstatsfile"
+		info "$(printf "Optimized %d files, skipped %d, and saved %sB (%.3f%%) in %s!\a" $opt $skip $(numfmt --to=iec-i --format="%.2f" $sav) $((1000000*$sav/($size?$size:1)))e-4  $( ((h)) && printf ${h}h; ((m)) && printf ${m}m)${s}s)"
 		rm -r "$globstatsfile" "$addinsDir" "$TMPDIR"
 	} &  # all the code is done in background so it won't be killed by Ctrl+C
-	until wait; do :; done  # each Ctrl+C will kill `wait` (1st hit: no new job, 2nd: kill parallel)  # TODO remove --bar from parallel and print stuff ourself (including saved bytes/%)
+	until wait; do :; done  # each Ctrl+C will kill `wait` (1st hit: no new job, 2nd: kill parallel)
 }
 
 # $1=folderpath where to extract all the add-ins
@@ -271,12 +274,12 @@ extractAddins() {
 }
 
 # $1=max number of CPU processors to use
-# Limit current RHEFO instance to only use $1 maximum threads by setting a CPU affinity (so future `nproc` will give $1). A thread is preferred over others if (by priority) it is not used by another RHEFO, it has a bigger idle time (integer from 0 to 3), or if it is physically on another CPU core.
+# Limit current RHEFO instance to only use $1 maximum threads by setting a CPU affinity (so future `nproc` calls will give $1). A thread is preferred over others if (by priority) it is not used by another RHEFO, it has a bigger idle time (integer from 0 to 3), or if it is physically on another CPU core.
 threadlimit() {
 	local wanted=$1 nproc=$(nproc) clk_tck=$(getconf CLK_TCK)
 	[ $nproc = $(nproc --all) ] || { warning 'This script does NOT have access to all cpu threads, ignoring --glob-threads.'; return;}
 
-	pids_of_other_rhefos=$(a=$BASHPID; pgrep -x rhefo | grep -vwe $$ -e $a)
+	pids_of_other_rhefos=$(pgrep -Ax rhefo)
 	taskset -acp $(cat /sys/devices/system/cpu/cpu*/topology/thread_siblings_list | perl -MEnv=nproc,wanted,pids_of_other_rhefos,clk_tck -e '
 		sub get_cpu_idle_times {
 			my %stats;
@@ -321,7 +324,12 @@ threadlimit() {
 # $1=filesize saved	$2=input filesize
 # uses a semaphore to allow only one thread at a time to write stats; $1==0 is considered as a skipped file, optimized otherwise
 globstats_update() {
-	sem --fg --id "$globstatsfile" 'set -- $(<"$globstatsfile"); echo "$(($1+'$1')) $(($2+'$2')) $(($3+('$1'!=0))) $(($4+! '$1'))" >"$globstatsfile"'
+	sem --fg --id "$globstatsfile" '
+		read sav size opt skip <"$globstatsfile"
+		((sav+='$1', size+='$2', opt+='$1'!=0, skip+=! '$1', done_perc=(opt+skip)*100/globtotaljobs))
+		echo $sav $size $opt $skip >"$globstatsfile"
+		printf "\033]0;RHEFO - %d%% - %sB saved\007" $done_perc $(numfmt --to=iec-i --format="%.2f" $sav)
+	'
 }
 
 # stdin=find -printf '%s\0%P\0%H\0', output sorted with largest %s first
@@ -363,6 +371,8 @@ catchSmallestFile() {
 # if globstrip is set, strip image (rm all except ICC) and write to output; returns 1 if didn't strip
 imageStrip() { [ -v globstrip ] && exiftool -all= --icc_profile:all -q ${2+-o "$2"} ${2--overwrite_original} "$1";}
 
+# $1=$2=version
+# returns 0 if $1 is older than or equal to $2; 1 otherwise
 ver_lte() { sort -CV <<<"$1"$'\n'"$2";}
 
 # $1=file to update
@@ -516,7 +526,7 @@ compressFile() {
 			else cp "$in" "$tmp"
 			fi
 			if ! [ -v globstrip ]
-			then a=$(metaflac --list --block-type=PICTURE "$tmp" | grep -oP '(?<=^METADATA block #)\d+$')  # PICTURE blocks IDs
+			then a=$(metaflac --list --block-type=PICTURE "$tmp" | grep -oP '^METADATA block #\K\d+$')  # PICTURE blocks IDs
 				# extract pictures (pics themselves and blocks), filenames written to array 'a'
 				parallel 'metaflac --block-number={} --export-picture-to="$tmp".{} "$tmp"; metaflac --block-number={} --list --data-format=binary "$tmp" >"$tmp".{}.block' ::: $a
 				metaflac --remove --block-type=PICTURE "$tmp"  # remove pics, since we append them later
@@ -618,7 +628,7 @@ compressFile() {
 			# TODO pngout apparently can sometimes do better: Just running pngout followed by pngout /f0 will result in the optimal compression; set the size manually can help Low entropy = High values, High entropy = Small values
 			# TODO see (or better version than) optipng -fix -f 5 -i 0 -zc 9 -zm 9 -zs 0-3 -zw 32k -nb -nc -np -nx "$file"
 			# TODO pingo is really great for images with alpha, BUT WILL ALWAYS OUTPUT TO 8bpc
-			# TODO try oxipng
+			# TODO try oxipng -o max --strip tEXt,zTXt,iTXt,eXIf,tIME --force
 			if [ $(ffprobe -v warning -show_entries stream=codec_name -of default=nk=1:nw=1 "$in") = apng ]
 			then # ect -1 ${globstrip+-strip} "$tmp"  # TODO (cannot strip using ECT since it drops all other frames - only 1st one is kept)
 				apngopt -z2 -i99${pnginsane+999} "$in" "$tmp" >/dev/null  # TODO to do better, we could split frames, use ECT --reuse, them remux   ;; TODO try pingo
@@ -636,11 +646,9 @@ compressFile() {
 				:
 			fi;;
 		*)	# for zstd, highest level -22 not alway give smallest output
-			# application/x-executable (TODO test if this MIME type is the only one for executables)
-			#upx -9 --ultra-brute -o out in
 			cp "$in" "$tmp";;  # TODO also cp in -> tmp IF THERE IS ANY ERROR (what about set -e or something like that?)
 	esac
-	((size_tmp=$(wc -c <"$tmp"),(size-=size_tmp)<=0)) && { info "'$in'$isEmbeddedFile: could not compress further. Input file was kept."; cp "$in" "$tmp"; size=0;}
+	((size_tmp=$(wc -c <"$tmp"),(size-=size_tmp)<=0)) && { info "'$in'$isEmbeddedFile: could not compress further. Input file was kept."; cp "$in" "$tmp"; size=0;}  # TODO this should not change modification time!!
 	((size_tmp)) || { warning "'$in'$isEmbeddedFile: empty output! Report the issue. Input file was kept."; cp "$in" "$tmp"; size=0;}
 	chmod $umask "$tmp"
 	[ -v globkeeptime ] && { touch -md"$mtime" "$tmp"; touch -ad"$atime" "$tmp";}
@@ -688,8 +696,6 @@ ctrlCHandler() {
 		} &  # run in background so if we hit **again** Ctrl+C super fast (< .01 sec), ctrlCHandler won't be killed
 	fi
 }
-
-trap ctrlCHandler INT  # Set up the Ctrl+C signal handler
 
 parseArgs "$@"
 
