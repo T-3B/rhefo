@@ -263,7 +263,7 @@ parseArgs() {  # not using `local` vars because this fct is only executed once
 		((s=SECONDS, h=s/3600, m=s/60-h*60, s%=60))
 		read sav size opt skip <"$globstatsfile"
 		info "$(printf "Optimized %d files, skipped %d, and saved %sB (%.3f%%) in %s!\a" $opt $skip $(numfmt --to=iec-i --format="%.2f" $sav) $((1000000*$sav/($size?$size:1)))e-4  $( ((h)) && printf ${h}h; ((m)) && printf ${m}m)${s}s)"
-		rm -r "$globstatsfile" "$addinsDir" "$TMPDIR"
+		rm -r --one-file-system "$globstatsfile" "$addinsDir" "$TMPDIR"
 	} &  # all the code is done in background so it won't be killed by Ctrl+C
 	until wait; do :; done  # each Ctrl+C will kill `wait` (1st hit: no new job, 2nd: kill parallel)
 }
@@ -412,12 +412,12 @@ compressFile() {
 	[[ -v inTopLevel && -v globnoextract ]] && return  # do not optimize the file if embedded and --glob-noextract is set
 	set -a  # export everything automaticall (e.g. for sub-parallel calls)
 	local a p v  # variables for temporary/intermediate values, ONLY SET THEM IN THE CASE SWITCH
-	local atime mtime umask size size_tmp in=$2${1:+${2:+/}}$1 isEmbeddedFile tmp out
+	local atime mtime umask size size_tmp in=$2${1:+${2:+/}}$1 isEmbeddedFile tmp tmp_dir=$(mktemp --tmpdir -d XXX) out
 	atime=$(stat -c%x "$in")
 	mtime=$(stat -c%y "$in")
 	umask=$(stat -c%a "$in")
-	cd "$(mktemp --tmpdir -d XXX)"  # keep every compressFile isolated from other threads, allows us to use "$tmp" with an additional filextension, or with some chars less, without worrying
-	tmp=$(mktemp -p"$PWD" --suff=."${in##*/}" XXX)  # always use tmp, so in!=tmp
+	cd "$tmp_dir"  # keep every compressFile isolated from other threads, allows us to use "$tmp" with an additional filextension, or with some chars less, without worrying
+	tmp=$(mktemp -p"$tmp_dir" --suff=."${in##*/}" XXX)  # always use tmp, so in!=tmp
 	#TODO check if $TMPDIR has enough free mem
 	out=$in
 	if [ -v inTopLevel ]
@@ -427,9 +427,9 @@ compressFile() {
 		[ -v globprefix ] && out=${out%/*}/$globprefix${out##*/}
 		if [[ (-v globoutput || -v globprefix) && ! -v globupdate && -e "$out" ]]
 		then warning "'$out' already exists, file not compressed nor updated." 'Rerun with -f to overwrite files in output directory, or with -p to add a prefix.'
-			cd /
-			rm -r "${tmp%/*}"
 			globstats_update 0 $3
+			cd /
+			rm -r --one-file-system "$tmp_dir"
 			return
 		fi
 	fi
@@ -473,7 +473,7 @@ compressFile() {
 			tar xf "$in" -C"$v"
 			compressTmpFolder "$v"
 			find "$v" \( ! -type d -o -empty \) -printf %P\\0 | tar cf "$tmp" -b1 --no-recursion --null -C"$v" -T-  # use `find` to not store any prefix (`./`) in tar contents; by default `tar` uses 20x512 bytes block for alignment, use `-b1` for only one; do not store non-empty dir as a separate element in the tar
-			rm -r "$v";;
+			rm -r --one-file-system "$v";;
 		application/zip | application/zip-compressed | application/x-zip-compressed)
 			# TODOOOOOOOOOOOO WARNING some uncompressed files need to stay uncompressed (like mimetype in epub - epub is a "disguised" ZIP). Use extension to differentiate EPUB from ZIP
 			# TODO check application/epub+zip, application/vnd.comicbook+zip, application/x-zip-compressed-fb2,
@@ -495,7 +495,7 @@ compressFile() {
 				zip -9rDq "$tmp" . |& grep -v 'zip error: Nothing to do!'  # -D to not add dirs; -9 forces everything > ~64 bytes to be compressed with Deflate (even if output is bigger) - useful as ect will NOT compress uncompressed files (and if Deflate stream is bigger than input data, ect will store the file uncompressed)
 				find . -type d -empty -print0 | xargs -r0 zip -q "$tmp"
 				cd ~-
-				rm -r "$v"
+				rm -r --one-file-system "$v"
 				ect -${zipinsane+8019}9 -quiet -zip --strict --mt-deflate "$tmp"  # using --strict makes sure ECT does not try to optimize archived files (so it will only optimize Deflate compression in ZIP, not embedded files themselves)
 			fi
 			# TODO for apk, do not extract to optimize inside (would require apk-resigner - AUR; + zipalign; + some uncompressed files should stay uncompressed https://stackoverflow.com/q/25425172/13227011)
@@ -646,15 +646,21 @@ compressFile() {
 				:
 			fi;;
 		*)	# for zstd, highest level -22 not alway give smallest output
-			cp "$in" "$tmp";;  # TODO also cp in -> tmp IF THERE IS ANY ERROR (what about set -e or something like that?)
+			size=0;;
 	esac
-	((size_tmp=$(wc -c <"$tmp"),(size-=size_tmp)<=0)) && { info "'$in'$isEmbeddedFile: could not compress further. Input file was kept."; cp "$in" "$tmp"; size=0;}  # TODO this should not change modification time!!
-	((size_tmp)) || { warning "'$in'$isEmbeddedFile: empty output! Report the issue. Input file was kept."; cp "$in" "$tmp"; size=0;}
+	((size-=(size_tmp=$(wc -c <"$tmp"))))  # $size is now number of Bytes saved
+	((0<size_tmp && 0<size)) || {  # 3 cases to handle: "optimized" file $tmp is in fact larger or same size; "optimized" file $tmp is in fact empty; unsupported mime-type size=size_tmp=0
+		((size_tmp)) && { >"$tmp"; info "'$in'$isEmbeddedFile: could not compress further. Input file was kept.";}
+		((size && ! size_tmp)) && warning "'$in'$isEmbeddedFile: empty output! Report the issue. Input file was kept."
+		[ "$in" = "$out" ] && { [ -v isEmbeddedFile ] || globstats_update 0 $3; cd /; rm -r --one-file-system "$tmp_dir"; return;}
+		tmp=$in; size=0
+	}
+
 	chmod $umask "$tmp"
 	[ -v globkeeptime ] && { touch -md"$mtime" "$tmp"; touch -ad"$atime" "$tmp";}
 	if [ -v isEmbeddedFile ]
 	then mv "$tmp" "$out"
-	elif [ "$(mv -v$([[ "$in" = "$out" || -v globupdate ]] || echo n) "$tmp" "$out")" ]  # `mv -v` prints nothing if nothing is done; using this to avoid race conditions by checking file existence then mv
+	elif [ "$($([ "$in" = "$tmp" ] && echo cp || echo mv) -v $([[ "$in" = "$out" || -v globupdate ]] || echo --update=none) "$tmp" "$out")" ]  # cp $in instead of mv $tmp if $tmp is empty; `mv -v` prints nothing if nothing is done; using this to avoid race conditions by checking file existence then mv
 	then chown -f --reference="$in" "$out"
 		chmod -f --reference="$in" "$out"
 		globstats_update $size $3
@@ -662,7 +668,7 @@ compressFile() {
 		globstats_update 0 $3
 	fi
 	cd /
-	rm -r "${tmp%/*}"
+	rm -r --one-file-system "$tmp_dir"
 }
 
 # $1=folder path where archive contents were extracted
