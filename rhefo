@@ -45,10 +45,6 @@
 # TODO change zip-nodeflate to zip-broken (so use also flac-broken for flaccid); *-broken == better comp but (far) less compatibility/support
 # TODO use jpg-broken for jpegtran -arithmetic
 
-# TODO for the file tree struct in the glob-output, what about same as rsyn ?
-# rsync source destination/   (copy folder `source` in destination - one more depth)
-# rsync source/ destination/   (copy content of folder `source` - not itself)
-
 # TODO allow mask to be mimetype if contains a '/' (like 'image/*')
 
 # TODO what about how lossy and strip works ?
@@ -57,8 +53,6 @@
 # TODO do the same thing for mask, like have a --<postfix>-ignore that won't do anything, and another one to simply copy from $in to $out
 
 # TODO add warning if file changed between rhefo start and file opt
-
-# TODO add progress to window title
 
 # TODO break switch into different functions so easier to use local with meaningful names (local can be read by child fct call)
 
@@ -332,7 +326,7 @@ globstats_update() {
 	'
 }
 
-# stdin=find -printf '%s\0%P\0%H\0', output sorted with largest %s first
+# stdin=find -printf '%s\0%P\0%H\0', output sorted with largest %s first; warns and removes duplicate input files
 sortFilesBySize() {
 	perl -0ne 'push @rec, $_; if ($#rec == 2) { $key = join("/", @rec[1] eq "\0" ? @rec[2] : @rec[2,1]) =~ y/\0//dr; if (exists $set{$key}) { system("bash", "-c", q{warning "'\''$0'\'': skipping file optimization from input argument '\''$1'\'', as it is already covered by another one."}, $key, @rec[2]); } else { @set{$key} = (); push @items, join("", @rec); @rec = (); }; } END { print(join("", sort { $b <=> $a } @items)) }'
 }
@@ -407,6 +401,18 @@ compressID3() {  # tested also tone and eyeD3; eyeD3 would be nice but python (a
 	fi
 }
 
+# $in=input file	$tmp=output file	$PWD=$tmp_dir
+# tested tools: zopfli, zopfli MrKrzYch00's mod, gzip, 7z, minigzip (from minizip-ng). Tested on all files from silesia.tar (ect is far faster than zopfli(mod), and always gives smaller files - even when file is 1KB; ECT << zopfli < zopfli_mrkrzych00 << gzip); zopfli_mrkrzych00 --i9999 --mui999 --slowfix --t0 --pass9 --all androidsdk.svg
+compressFileGzip() {
+	local uncompName=$(gzip -Nl "$in")
+	uncompName=${uncompName##*/}
+	gzip -dc "$in" >"$uncompName"
+	compressFile "$uncompName"
+	gzip -1c$([[ -v gziplossy || "$uncompName.gz" = "${in##*/}" ]] && echo n) "$uncompName" >"$tmp"
+	rm "$uncompName"
+	ect -${gzipinsane+8019}9 --mt-deflate -gzip --strict -quiet "$tmp"  # using strict won't recompress embedded file
+}
+
 # $1=filepath	$2=prefixpath	$3=filesize		("$2/$1" = full absolute input path; warning: $1 can be empty)
 compressFile() {
 	[[ -v inTopLevel && -v globnoextract ]] && return  # do not optimize the file if embedded and --glob-noextract is set
@@ -416,7 +422,7 @@ compressFile() {
 	atime=$(stat -c%x "$in")
 	mtime=$(stat -c%y "$in")
 	umask=$(stat -c%a "$in")
-	cd "$tmp_dir"  # keep every compressFile isolated from other threads, allows us to use "$tmp" with an additional filextension, or with some chars less, without worrying
+	pushd "$tmp_dir" >/dev/null  # keep every compressFile isolated from other threads, allows us to use "$tmp" with an additional filextension, or with some chars less, without worrying
 	tmp=$(mktemp -p"$tmp_dir" --suff=."${in##*/}" XXX)  # always use tmp, so in!=tmp
 	#TODO check if $TMPDIR has enough free mem
 	out=$in
@@ -428,7 +434,7 @@ compressFile() {
 		if [[ (-v globoutput || -v globprefix) && ! -v globupdate && -e "$out" ]]
 		then warning "'$out' already exists, file not compressed nor updated." 'Rerun with -f to overwrite files in output directory, or with -p to add a prefix.'
 			globstats_update 0 $3
-			cd /
+			popd >/dev/null
 			rm -r --one-file-system "$tmp_dir"
 			return
 		fi
@@ -438,22 +444,16 @@ compressFile() {
 	# TODO if mime=application/octet-stream, use FFmpeg to try to get the container name (or use a file mapping filextensions to mime-type)
 	case $(file -b --mime-type "$in") in  # see here for known MIME types: /usr/share/mime/types
 		application/gzip | application/x-gzip)
-			# tested tools: zopfli, zopfli MrKrzYch00's mod, gzip, 7z, minigzip (from minizip-ng). Tested on all files from silesia.tar (ect is far faster than zopfli(mod), and always gives smaller files - even when file is 1KB; ECT << zopfli < zopfli_mrkrzych00 << gzip); zopfli_mrkrzych00 --i9999 --mui999 --slowfix --t0 --pass9 --all androidsdk.svg
-			p=$(gzip -Nl "$in")
-			p=${p##*/}  # p= original decomp filename
-			gzip -dc "$in" >"${tmp%.*}"
-			compressFile "${tmp%.*}"
-			gzip -1c$([[ -v gziplossy || "$p.gz" = "${tmp##*/}" ]] && echo n) "${tmp%.*}" >"$tmp"
-			rm "${tmp%.*}"
-			ect -${gzipinsane+8019}9 --mt-deflate -gzip --strict -quiet "$tmp";;  # using strict won't recompress embedded file
+			compressFileGzip;;
 		application/pdf)  # TODO there is also `mutool extract`;	for lossless recompression check, see `mutool draw` (converts pdf to vector graphics)
 			# TODO: best combination: cpdf -> pdfsizeopt -> mutool clean -> qpdf
 			# TODO but another test: qpdf -> mutool -> pdfsizeopt
+			# TODO test mutool -Zdze 100
 			# Warning it's not always the same order giving smallest file
 			# cpdf: -remove-metadata -remove-duplicate-fonts
-			mutool clean -gggg "$in" "$tmp"  # at least clean once
+			mutool clean -m "$in" "$tmp"  # fix some corrupted/malformed files
 			p=$(wc -c <"$tmp")
-			while v=$p; mutool clean -gggg "$tmp" "$tmp"; p=$(wc -c <"$tmp"); ((p<v)); do :; done  # repeat, until size stops decreasing, "garbage collect objects/streams + merge/reuse duplicates + compact cross ref table"; I saw a file that needed 7 iterations
+			while v=$p; mutool clean -mstgggg "$tmp" "$tmp"; p=$(wc -c <"$tmp"); ((p<v)); do :; done  # repeat, until size stops decreasing, "garbage collect objects/streams + merge/reuse duplicates + compact cross ref table"; I saw a file that needed 7 iterations
 			qpdf --recompress-flate --compression-level=9 --object-streams=generate --decode-level=specialized --replace-input "$tmp"  # don't use decode-level=all or bigger output
 			# TODO for lossless check, see `mutool draw` (can convert pdf to vector graphics :chad:)
 			# TODO check with pdfsizeopt (see minuimus for that, nice args), or see parser here : https://blog.didierstevens.com/programs/pdf-tools/ to extract objects
@@ -652,7 +652,7 @@ compressFile() {
 	((0<size_tmp && 0<size)) || {  # 3 cases to handle: "optimized" file $tmp is in fact larger or same size; "optimized" file $tmp is in fact empty; unsupported mime-type size=size_tmp=0
 		((size_tmp)) && { >"$tmp"; info "'$in'$isEmbeddedFile: could not compress further. Input file was kept.";}
 		((size && ! size_tmp)) && warning "'$in'$isEmbeddedFile: empty output! Report the issue. Input file was kept."
-		[ "$in" = "$out" ] && { [ -v isEmbeddedFile ] || globstats_update 0 $3; cd /; rm -r --one-file-system "$tmp_dir"; return;}
+		[ "$in" = "$out" ] && { [ -v isEmbeddedFile ] || globstats_update 0 $3; popd >/dev/null; rm -r --one-file-system "$tmp_dir"; return;}
 		tmp=$in; size=0
 	}
 
@@ -667,7 +667,7 @@ compressFile() {
 	else warning "'$out' already exists, not updated. Compressed version here: '$tmp'." 'Rerun with -f to overwrite files in output directory, or with -p to add a prefix.'  # TODO not remove with below rm -r
 		globstats_update 0 $3
 	fi
-	cd /
+	popd >/dev/null
 	rm -r --one-file-system "$tmp_dir"
 }
 
