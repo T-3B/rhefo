@@ -149,6 +149,8 @@ List of options (global ones first, then grouped by file type):
   if set, vendor string from Vorbis streams are removed
 --png-insane		better compression, far slower (TODO benchmark)
   if set, use 80199 iterations; default: 9 (PNG), 99 (APNG)
+--z-insane			better compression, far slower (TODO benchmark)
+  if set, try all block alignments on Unix compressed .Z; default: 256B-aligned
 --zip-insane		better compression, far slower (TODO benchmark)
   if set, use 80199 iterations; default: 9
 --zip-nodeflate		better compression, slower, compatibility issues
@@ -189,7 +191,7 @@ find -name "*.flac" -type f -print0 | rhefo -0o /outdir' |\
 parseArgs() {  # not using `local` vars because this fct is only executed once
 	[ $(printf '\1' | od -dAn) = 1 ] || error 'This script was not tested on BIG ENDIAN devices. I mainly use `printf %x`' 'with numbers of up to 4 bytes.' 'PLEASE, open an issue and if you have time HELP ME supporting this' 'architecture by simply testing! This would really help a lot, since I only' 'have little-endian devices. Seriously, please.'
 	getopt -T && { error 4 'Your `getopt` is not compatible with this script. Open an issue.';}
-	args=$(getopt -o hx:09j:klm:ESo:p:st:f -l help,extract-addins:,null,glob-downmix,glob-insane,glob-jobs:,glob-keeptime,glob-lossy,glob-filemask:,glob-noextract,glob-nosort,glob-output:,glob-prefix:,glob-strip,glob-threads:,glob-tmp:,glob-update,flac-insane,flac-lossy,flac-subset,gzip-insane,gzip-lossy,jpeg-insane,jpeg-lossy,mp3-lossy,ogg-lossy,png-insane,zip-insane -n rhefo -s bash -- "$@")
+	args=$(getopt -o hx:09j:klm:ESo:p:st:f -l help,extract-addins:,null,glob-downmix,glob-insane,glob-jobs:,glob-keeptime,glob-lossy,glob-filemask:,glob-noextract,glob-nosort,glob-output:,glob-prefix:,glob-strip,glob-threads:,glob-tmp:,glob-update,flac-insane,flac-lossy,flac-subset,gzip-insane,gzip-lossy,jpeg-insane,jpeg-lossy,mp3-lossy,ogg-lossy,png-insane,z-insane,zip-insane -n rhefo -s bash -- "$@")
 	(($?)) && error 'Could not parse args. See the help message `rhefo -h`.'
 	TMPDIR=/dev/shm  # mktemp uses directly TMPDIR, so set it instead of another variable globtmp (or we should specify this variable as an argument)
 	eval set -- "$args"
@@ -200,7 +202,7 @@ parseArgs() {  # not using `local` vars because this fct is only executed once
 			-x | --extract-addins)	[[ -d "$2" || -w "$2" ]] || error "Output directory '$2' does not exist or cannot write to it."; extractAddins "$2"; exit;;
 			-0 | --null)			stdinnull=;;
 			--glob-downmix)			globdownmix=;;
-			-9 | --glob-insane)		flacinsane=;gzipinsane=;jpeginsane=;pnginsane=;zipinsane=;;
+			-9 | --glob-insane)		flacinsane=;gzipinsane=;jpeginsane=;pnginsane=;zinsane=;zipinsane=;;
 			-j | --glob-jobs)		((0<$2)) || error "Wrong jobs int: '$2'."; globjobs=$2; shift;;
 			-k | --glob-keeptime)	globkeeptime=;;
 			-l | --glob-lossy)		gziplossy=;flaclossy=;jpeglossy=;mp3lossy=;ogglossy=;;
@@ -223,6 +225,7 @@ parseArgs() {  # not using `local` vars because this fct is only executed once
 			--mp3-lossy)			mp3lossy=;;
 			--ogg-lossy)			ogglossy=;;
 			--png-insane)			pnginsane=;;
+			--z-insane)				zinsane=;;
 			--zip-insane)			zipinsane=;;
 			--zip-nodeflate)		zipnodeflate=;;
 			--) 					shift; break;;
@@ -413,6 +416,13 @@ compressFileGzip() {
 	ect -${gzipinsane+8019}9 --mt-deflate -gzip --strict -quiet "$tmp"  # using strict won't recompress embedded file
 }
 
+# $in=input file	$tmp=output file
+compressFileZ() {
+	flexiGIF -q --decompress "$in" "${tmp%.*}"
+	compressFile "${tmp%.*}"
+	flexiGIF -p ${zinsane--a=256} --compress "${tmp%.*}" "$tmp"
+}
+
 # $1=filepath	$2=prefixpath	$3=filesize		("$2/$1" = full absolute input path; warning: $1 can be empty)
 compressFile() {
 	[[ -v inTopLevel && -v globnoextract ]] && return  # do not optimize the file if embedded and --glob-noextract is set
@@ -460,13 +470,8 @@ compressFile() {
 			# pdfsizeopt needed python2, ghostscript, sam2p, png22pnm
 			# pdfsizeopt --optimize --use-pngout=yes --use-jbig2=yes --use-sam2p-pr=yes --use-image-optimizer='ect -999 -strip --mt-deflate %(targetfnq)s' in.pdf out.pdf
 			;;
-		application/octet-stream)  # can be many many things
-			# TODO
-			;;
 		application/x-compress)
-			flexiGIF -q --decompress "$in" "${tmp%.*}"
-			compressFile "${tmp%.*}"
-			flexiGIF -p -a=256 --compress "${tmp%.*}" "$tmp";;  # TODO insane: remove -a=256
+			compressFileZ;;
 		application/x-tar | application/x-cbt)  # TODO use binsort
 			# some metadata infos are not guarenteed to be kept (owner, umask, atime/mtime)
 			v=$(mktemp -d)
