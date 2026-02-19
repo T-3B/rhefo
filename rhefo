@@ -60,6 +60,7 @@ set -a  # export var+fct automatically
 set -m  # All processes run in a separate process group (needed for Ctrl+C "trick")
 version=0.0.1
 PARALLEL=--lb
+alias rm='rm --one-file-system'
 
 trap ctrlCHandler INT  # Set up the Ctrl+C signal handler
 
@@ -153,10 +154,10 @@ List of options (global ones first, then grouped by file type):
   if set, try all block alignments on Unix compressed .Z; default: 256B-aligned
 --zip-insane		better compression, far slower (TODO benchmark)
   if set, use 80199 iterations; default: 9
---zip-nodeflate		better compression, slower, compatibility issues
+--zip-nostd			better compression, slower, compatibility issues
   if set, do not use only Deflate but also Deflate64,LZMA,PPMd,BZip2,Zstd,XZ
-  default is to only use Deflate if input has only Deflate streams
-  warning, many softwares do NOT support other stream but Deflate
+  default is to use standardized ZIP (only Deflate) if input is standard too
+  WARNING! Many softwares do NOT support other compression but Deflate
 
 If you think the script is taking too much time, do not hesitate to hit Ctrl+C!
 The first Ctrl+C will tell RHEFO to not start any new job and to gently finish
@@ -191,7 +192,7 @@ find -name "*.flac" -type f -print0 | rhefo -0o /outdir' |\
 parseArgs() {  # not using `local` vars because this fct is only executed once
 	[ $(printf '\1' | od -dAn) = 1 ] || error 'This script was not tested on BIG ENDIAN devices. I mainly use `printf %x`' 'with numbers of up to 4 bytes.' 'PLEASE, open an issue and if you have time HELP ME supporting this' 'architecture by simply testing! This would really help a lot, since I only' 'have little-endian devices. Seriously, please.'
 	getopt -T && { error 4 'Your `getopt` is not compatible with this script. Open an issue.';}
-	args=$(getopt -o hx:09j:klm:ESo:p:st:f -l help,extract-addins:,null,glob-downmix,glob-insane,glob-jobs:,glob-keeptime,glob-lossy,glob-filemask:,glob-noextract,glob-nosort,glob-output:,glob-prefix:,glob-strip,glob-threads:,glob-tmp:,glob-update,flac-insane,flac-lossy,flac-subset,gzip-insane,gzip-lossy,jpeg-insane,jpeg-lossy,mp3-lossy,ogg-lossy,png-insane,z-insane,zip-insane -n rhefo -s bash -- "$@")
+	args=$(getopt -o hx:09j:klm:ESo:p:st:f -l help,extract-addins:,null,glob-downmix,glob-insane,glob-jobs:,glob-keeptime,glob-lossy,glob-filemask:,glob-noextract,glob-nosort,glob-output:,glob-prefix:,glob-strip,glob-threads:,glob-tmp:,glob-update,flac-insane,flac-lossy,flac-subset,gzip-insane,gzip-lossy,jpeg-insane,jpeg-lossy,mp3-lossy,ogg-lossy,png-insane,z-insane,zip-insane,zip-nostd -n rhefo -s bash -- "$@")
 	(($?)) && error 'Could not parse args. See the help message `rhefo -h`.'
 	TMPDIR=/dev/shm  # mktemp uses directly TMPDIR, so set it instead of another variable globtmp (or we should specify this variable as an argument)
 	eval set -- "$args"
@@ -227,7 +228,7 @@ parseArgs() {  # not using `local` vars because this fct is only executed once
 			--png-insane)			pnginsane=;;
 			--z-insane)				zinsane=;;
 			--zip-insane)			zipinsane=;;
-			--zip-nodeflate)		zipnodeflate=;;
+			--zip-nostd)			zipnostd=;;
 			--) 					shift; break;;
 			*) 						error "Unexpected argument '$1'. See the help message \`rhefo -h\`."
 		esac
@@ -260,7 +261,7 @@ parseArgs() {  # not using `local` vars because this fct is only executed once
 		((s=SECONDS, h=s/3600, m=s/60-h*60, s%=60))
 		read sav size opt skip <"$globstatsfile"
 		info "$(printf "Optimized %d files, skipped %d, and saved %sB (%.3f%%) in %s!\a" $opt $skip $(numfmt --to=iec-i --format="%.2f" $sav) $((1000000*$sav/($size?$size:1)))e-4  $( ((h)) && printf ${h}h; ((m)) && printf ${m}m)${s}s)"
-		rm -r --one-file-system "$globstatsfile" "$addinsDir" "$TMPDIR"
+		rm -r "$globstatsfile" "$addinsDir" "$TMPDIR"
 	} &  # all the code is done in background so it won't be killed by Ctrl+C
 	until wait; do :; done  # each Ctrl+C will kill `wait` (1st hit: no new job, 2nd: kill parallel)
 }
@@ -404,23 +405,55 @@ compressID3() {  # tested also tone and eyeD3; eyeD3 would be nice but python (a
 	fi
 }
 
-# $in=input file	$tmp=output file	$PWD=$tmp_dir
-# tested tools: zopfli, zopfli MrKrzYch00's mod, gzip, 7z, minigzip (from minizip-ng). Tested on all files from silesia.tar (ect is far faster than zopfli(mod), and always gives smaller files - even when file is 1KB; ECT << zopfli < zopfli_mrkrzych00 << gzip); zopfli_mrkrzych00 --i9999 --mui999 --slowfix --t0 --pass9 --all androidsdk.svg
-compressFileGzip() {
+compressFileGzip() {  # tested tools: zopfli, zopfli MrKrzYch00's mod, gzip, 7z, minigzip (from minizip-ng). Tested on all files from silesia.tar (ect is far faster than zopfli(mod), and always gives smaller files - even when file is 1KB; ECT << zopfli < zopfli_mrkrzych00 << gzip); zopfli_mrkrzych00 --i9999 --mui999 --slowfix --t0 --pass9 --all androidsdk.svg
 	local uncompName=$(gzip -Nl "$in")
-	uncompName=${uncompName##*/}
+	uncompName=${uncompName##*/}  # works only if $in is absolute path
 	gzip -dc "$in" >"$uncompName"
-	compressFile "$uncompName"
+	compressFile "$tmp_dir/$uncompName"
 	gzip -1c$([[ -v gziplossy || "$uncompName.gz" = "${in##*/}" ]] && echo n) "$uncompName" >"$tmp"
 	rm "$uncompName"
 	ect -${gzipinsane+8019}9 --mt-deflate -gzip --strict -quiet "$tmp"  # using strict won't recompress embedded file
 }
 
-# $in=input file	$tmp=output file
 compressFileZ() {
 	flexiGIF -q --decompress "$in" "${tmp%.*}"
 	compressFile "${tmp%.*}"
 	flexiGIF -p ${zinsane--a=256} --compress "${tmp%.*}" "$tmp"
+}
+
+compressFileTar() {  # TODO use binsort
+	local uncompFolder=$(mktemp -dp"$tmp_dir")
+	tar xf "$in" -C"$uncompFolder"
+	compressTmpFolder "$uncompFolder"
+	find "$uncompFolder" \( ! -type d -o -empty \) -printf %P\\0 | tar cf "$tmp" -b1 --no-recursion --null -C"$uncompFolder" -T-  # `find` to not store any './' prefix, and remove non-empty dirs from the tar; -b1 for single 512B blocks, smaller tar but mighty be less compressible by e.g. gzip
+	rm -r "$uncompFolder"
+}
+
+compressFileZip() {  # tested softwares: minizip-ng, 7z, kzip, leanify, ect
+	# WARNING: some uncompressed files need to stay uncompressed (like mimetype in EPUB)
+	# TODO check application/epub+zip, application/vnd.comicbook+zip, application/x-zip-compressed-fb2,
+	# TODO  EPUBs, which require that the first entry in the ZIP be the mimetype file non-compressed
+	# TODO for android APK: "aur/apk-resigner 1-2 (+8 0.00)		A bash script utility that resigns the Android Package (APK) files (Android applications) with different certificates."		search "apk" or "android" with yay, because many utils exist to edit apk
+
+	# ISO/IEC 21320-1 Standardization requires files in ZIP archives to be ONLY stored uncompressed or Deflated, without encryption/digital signature/"patched data" features, and may not span multiple volumes or be segmented
+
+	# TODO following code was only written for *standard* ZIP archives, not tested on alternatives like EPUB
+	[[ "${tmp,,}" = *.zip ]] && ! 7z l -slt "$in" | grep -Pq '^Method = (?!Store|Deflate)' || { size=0; return;}  # if filename != *.zip, or if not using standard ZIP compression method, just skip the file
+	local uncompFolder=$(mktemp -dp"$tmp_dir")
+	7z x "$in" -o"$uncompFolder" >/dev/null
+	compressTmpFolder "$uncompFolder"
+	if [ -v zipnostd ]
+	then : # TODO this code should be applied too if input is already nonstd
+	else  # even if `zip -9` is single-threaded, compressed 2.2GB with 660 files in 67 seconds (fast enough). Could take less (but more mem) time by compressing each file in its own zip, ect all of them in parallel (because ect takes each file in the archive one after the other), then merge them (using zipmerge from libzip)
+		# if input is already well-optimized - quite rare in the wild - a direct `ect` inplace might give better result than extract+repack as ECT keeps the smallest Deflate between its attempt and input.  # todo For the smallest ZIP, might do "extract single file, compressFile, if smaller then freshen its ZIP entry `zip -f`, otherwise keep as is but MAKE SURE IT'S Deflated (not uncompressed)" for each file (quite heavy to implement, and too rare for this to be implemented for now - would require either twice the optimization or byte manipulations as there's no way to insert already-compressed Deflate streams)
+		cd "$uncompFolder"
+		base64 -d >"$tmp" <<<UEsFBgAAAAAAAAAAAAAAAAAAAAAAAA==  # empty zip
+		zip -9rDq "$tmp" . |& grep -v 'zip error: Nothing to do!'  # -D to not add dirs; -9 forces everything ~64+B to be Deflated (even if output is bigger) - useful as ECT will NOT compress uncompressed files (and if Deflate stream is bigger than input data, ECT will store the file uncompressed)
+		find . -type d -empty -print0 | xargs -r0 zip -q "$tmp"
+		cd ~-
+		rm -r "$uncompFolder"
+		ect -${zipinsane+8019}9 -quiet -zip --strict --mt-deflate "$tmp"  # using --strict makes sure ECT does not try to optimize archived files (so it will only optimize Deflate compression in ZIP, not embedded files themselves)
+	fi
 }
 
 # $1=filepath	$2=prefixpath	$3=filesize		("$2/$1" = full absolute input path; warning: $1 can be empty)
@@ -433,11 +466,11 @@ compressFile() {
 	mtime=$(stat -c%y "$in")
 	umask=$(stat -c%a "$in")
 	pushd "$tmp_dir" >/dev/null  # keep every compressFile isolated from other threads, allows us to use "$tmp" with an additional filextension, or with some chars less, without worrying
-	tmp=$(mktemp -p"$tmp_dir" --suff=."${in##*/}" XXX)  # always use tmp, so in!=tmp
+	tmp=$(mktemp -p"$tmp_dir" --suff=."${in##*/}" XXX)  # always use tmp, so in!=tmp; add dot so tmp has at least one (safe to use "${tmp%.*}")
 	#TODO check if $TMPDIR has enough free mem
 	out=$in
 	if [ -v inTopLevel ]
-	then isEmbeddedFile=" (embedded file from '$inTopLevel')"
+	then isEmbeddedFile=" (embedded file from '$inTopLevel')"; globkeeptime=
 	else inTopLevel=$in
 		[ -v globoutput ] && out=$globoutput/${2##*/}${1:+/$1}
 		[ -v globprefix ] && out=${out%/*}/$globprefix${out##*/}
@@ -445,13 +478,14 @@ compressFile() {
 		then warning "'$out' already exists, file not compressed nor updated." 'Rerun with -f to overwrite files in output directory, or with -p to add a prefix.'
 			globstats_update 0 $3
 			popd >/dev/null
-			rm -r --one-file-system "$tmp_dir"
+			rm -r "$tmp_dir"
 			return
 		fi
 	fi
 	size=${3-$(wc -c <"$in")}
 
 	# TODO if mime=application/octet-stream, use FFmpeg to try to get the container name (or use a file mapping filextensions to mime-type)
+	# NOTE: below functions should read-only $in, write the optimized output to $tmp, and may use any variables declared above; $PWD=$tmp_dir; set $size to 0 and do nothing else if file is unsupported
 	case $(file -b --mime-type "$in") in  # see here for known MIME types: /usr/share/mime/types
 		application/gzip | application/x-gzip)
 			compressFileGzip;;
@@ -472,43 +506,10 @@ compressFile() {
 			;;
 		application/x-compress)
 			compressFileZ;;
-		application/x-tar | application/x-cbt)  # TODO use binsort
-			# some metadata infos are not guarenteed to be kept (owner, umask, atime/mtime)
-			v=$(mktemp -d)
-			tar xf "$in" -C"$v"
-			compressTmpFolder "$v"
-			find "$v" \( ! -type d -o -empty \) -printf %P\\0 | tar cf "$tmp" -b1 --no-recursion --null -C"$v" -T-  # use `find` to not store any prefix (`./`) in tar contents; by default `tar` uses 20x512 bytes block for alignment, use `-b1` for only one; do not store non-empty dir as a separate element in the tar
-			rm -r --one-file-system "$v";;
+		application/x-tar | application/x-cbt)
+			compressFileTar;;
 		application/zip | application/zip-compressed | application/x-zip-compressed)
-			# TODOOOOOOOOOOOO WARNING some uncompressed files need to stay uncompressed (like mimetype in epub - epub is a "disguised" ZIP). Use extension to differentiate EPUB from ZIP
-			# TODO check application/epub+zip, application/vnd.comicbook+zip, application/x-zip-compressed-fb2,
-			# TODO for 7z there are plug-ins : https://www.tc4shell.com/en/7zip/ (zstd, Brotli, LZ4, LZ5, Lizard, Fast LZMA2 and many more)
-			# TODO  EPUBs, which require that the first entry in the ZIP be the mimetype file non-compressed
-			#  TODO for android APK: "aur/apk-resigner 1-2 (+8 0.00)		A bash script utility that resigns the Android Package (APK) files (Android applications) with different certificates."
-			# search "apk" or "android" with yay, because many utils exist to edit apk
-			# tested softwares: minizip-ng, 7z, kzip, leanify, ect
-
-			7z l -slt "$in" | grep '^Method = ' | grep -qve Store -e Deflate && p=  # at least one Method is not Store nor Deflate
-			v=$(mktemp -d)
-			7z x "$in" -o"$v" >/dev/null
-			compressTmpFolder "$v"
-			if [[ -v zipnodeflate || -v p ]]
-			then : # TODO
-			else  # even if `zip -9` only uses 100% cpu, compressed 2.2GB with 660 files in 67 seconds (fast enough). Could take less (but more mem) time by compressing each file in its own zip, ect all of them in parallel (because ect takes each file in the archive one after the other), then merge them (using zipmerge from libzip)
-				cd "$v"
-				base64 -d >"$tmp" <<<UEsFBgAAAAAAAAAAAAAAAAAAAAAAAA==  # empty zip
-				zip -9rDq "$tmp" . |& grep -v 'zip error: Nothing to do!'  # -D to not add dirs; -9 forces everything > ~64 bytes to be compressed with Deflate (even if output is bigger) - useful as ect will NOT compress uncompressed files (and if Deflate stream is bigger than input data, ect will store the file uncompressed)
-				find . -type d -empty -print0 | xargs -r0 zip -q "$tmp"
-				cd ~-
-				rm -r --one-file-system "$v"
-				ect -${zipinsane+8019}9 -quiet -zip --strict --mt-deflate "$tmp"  # using --strict makes sure ECT does not try to optimize archived files (so it will only optimize Deflate compression in ZIP, not embedded files themselves)
-			fi
-			# TODO for apk, do not extract to optimize inside (would require apk-resigner - AUR; + zipalign; + some uncompressed files should stay uncompressed https://stackoverflow.com/q/25425172/13227011)
-
-			# TODO for ZIP and 7z, we should bruteforce different compression method
-			# ZIP: no (solid) block compression, so easier: each file is distinct from the others, so just bruteforce method compression and select the smallest embedded file. Deflate Deflate64 BZip2 LZMA XZ Zstd PPMd and perhaps more
-				# minizip-ng: Deflate (no flag), Bzip2, LZMA, Zstd		7zip: Deflate, Deflate64 , BZip2
-			;;
+			compressFileZip;;
 		audio/flac | audio/x-flac)  # Tested softwares (with different genres, 44.1 and 96 kHz, 16 and 24-bit, stereo): fork of reference FLAC 1.4.2 encoder https://github.com/ktmf01/flac; FLACOut.exe; CUETools.Flake.exe 2.2.2 --vbr 3 -11 -P 0 --lax --no-seektable -r 8 -e 32 -l 32 (tested different --window-method, -w, --vbr <0..4>, and did beat reference FLAC encoder *only* if I did *not* try -A functions); justinruggles' Flake
 			# Note on FLAC compression: I made several benchmarks (10 encodes with different settings for 40 wav - PCM s16 44.1 kHz - files).
 			# For easy copy-paste, here is a command. Nearly the same size as only using `subdivide_tukey(40)' (by ~0.01%), but taking 1.7x longer. Therefore if better compression ratio is needed I recommend only increasing the value given to `subdivide_tukey'.
@@ -651,13 +652,14 @@ compressFile() {
 				:
 			fi;;
 		*)	# for zstd, highest level -22 not alway give smallest output
+			# for 7z, should try binsort + different compression methods for different file types (see this plugin as basis: https://www.tc4shell.com/en/7zip/smart7z/)
 			size=0;;
 	esac
 	((size-=(size_tmp=$(wc -c <"$tmp"))))  # $size is now number of Bytes saved
 	((0<size_tmp && 0<size)) || {  # 3 cases to handle: "optimized" file $tmp is in fact larger or same size; "optimized" file $tmp is in fact empty; unsupported mime-type size=size_tmp=0
 		((size_tmp)) && { >"$tmp"; info "'$in'$isEmbeddedFile: could not compress further. Input file was kept.";}
 		((size && ! size_tmp)) && warning "'$in'$isEmbeddedFile: empty output! Report the issue. Input file was kept."
-		[ "$in" = "$out" ] && { [ -v isEmbeddedFile ] || globstats_update 0 $3; popd >/dev/null; rm -r --one-file-system "$tmp_dir"; return;}
+		[ "$in" = "$out" ] && { [ -v isEmbeddedFile ] || globstats_update 0 $3; popd >/dev/null; rm -r "$tmp_dir"; return;}
 		tmp=$in; size=0
 	}
 
@@ -673,12 +675,12 @@ compressFile() {
 		globstats_update 0 $3
 	fi
 	popd >/dev/null
-	rm -r --one-file-system "$tmp_dir"
+	rm -r "$tmp_dir"
 }
 
 # $1=folder path where archive contents were extracted
 compressTmpFolder() {
-	[ -v globnoextract ] || find "$1" -type f -printf '%s\0%P\0%H\0' | sortFilesBySize | parallel -0L3 globkeeptime= compressFile {2} {3} {1}
+	[ -v globnoextract ] || find "$1" -type f -printf '%s\0%P\0%H\0' | sortFilesBySize | parallel -0L3 compressFile {2} {3} {1}
 }
 
 # $@=info to print, one arg per line
