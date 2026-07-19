@@ -256,11 +256,11 @@ parseArgs() {  # not using `local` vars because this fct is only executed once
 		# TODO parallel --noswap
 		# TODO parallel --load to not start job if current cpu load is above x
 		# TODO parallel --delay (makes sense to use only with --load)
-		realpath -z -- "$@" | { cd /; parallel --xargs -q0 find {} -type f ${globfilemask+-name "$globfilemask"} -printf '%s\0%P\0%H\0' | { [ -v globnosort ] && cat || sortFilesBySize;} | parallel -j${globjobs-100%} -0L3 --bar --plus globtotaljobs={##} compressFile {2} {3} {1}; cd ~-;}
+		realpath -z -- "$@" | { cd /; parallel --xargs -q0 find {} -type f ${globfilemask+-name "$globfilemask"} -printf '%s\0%P\0%H\0' | { [ -v globnosort ] && cat || sortFilesBySize;} | parallel -j${globjobs-100%} -0L3 --bar --tag --plus globtotaljobs={##} compressFile {2} {3} {1}; cd ~-;}
 
 		((s=SECONDS, h=s/3600, m=s/60-h*60, s%=60))
 		read sav size opt skip <"$globstatsfile"
-		info "$(printf "Optimized %d files, skipped %d, and saved %sB (%.3f%%) in %s!\a" $opt $skip $(numfmt --to=iec-i --format="%.2f" $sav) $((1000000*$sav/($size?$size:1)))e-4  $( ((h)) && printf ${h}h; ((m)) && printf ${m}m)${s}s)"
+		info "$(printf "Optimized %d file%.1s, skipped %d, and saved %sB (%.3f%%) in %s!\a" $opt "$(((opt>1)) && echo s)" $skip $(numfmt --to=iec-i --format="%.2f" $sav) $((1000000*$sav/($size?$size:1)))e-4  $( ((h)) && printf ${h}h; ((m)) && printf ${m}m)${s}s)"
 		rm -r "$globstatsfile" "$addinsDir" "$TMPDIR"
 	} &  # all the code is done in background so it won't be killed by Ctrl+C
 	until wait; do :; done  # each Ctrl+C will kill `wait` (1st hit: no new job, 2nd: kill parallel)
@@ -274,10 +274,9 @@ extractAddins() {
 # $1=max number of CPU processors to use
 # Limit current RHEFO instance to only use $1 maximum threads by setting a CPU affinity (so future `nproc` calls will give $1). A thread is preferred over others if (by priority) it is not used by another RHEFO, it has a bigger idle time (integer from 0 to 3), or if it is physically on another CPU core.
 threadlimit() {
-	local wanted=$1 nproc=$(nproc) clk_tck=$(getconf CLK_TCK)
+	local wanted=$1 nproc=$(nproc) clk_tck=$(getconf CLK_TCK) pids_of_other_rhefos=$(pgrep -Ax rhefo)
 	[ $nproc = $(nproc --all) ] || { warning 'This script does NOT have access to all cpu threads, ignoring --glob-threads.'; return;}
 
-	pids_of_other_rhefos=$(pgrep -Ax rhefo)
 	taskset -acp $(cat /sys/devices/system/cpu/cpu*/topology/thread_siblings_list | perl -MEnv=nproc,wanted,pids_of_other_rhefos,clk_tck -e '
 		sub get_cpu_idle_times {
 			my %stats;
@@ -335,7 +334,7 @@ sortFilesBySize() {
 	perl -0ne 'push @rec, $_; if ($#rec == 2) { $key = join("/", @rec[1] eq "\0" ? @rec[2] : @rec[2,1]) =~ y/\0//dr; if (exists $set{$key}) { system("bash", "-c", q{warning "'\''$0'\'': skipping file optimization from input argument '\''$1'\'', as it is already covered by another one."}, $key, @rec[2]); } else { @set{$key} = (); push @items, join("", @rec); @rec = (); }; } END { print(join("", sort { $b <=> $a } @items)) }'
 }
 
-# TODO better to change these2= 2 fct to only support reading data from stdin ?
+# TODO better to change these 2 fct to only support reading data from stdin ?
 # convert binary data to hexadecimal
 # $1=filepath (or empty for stdin)	$2=byte offset to print (in decimal)	$3=nbr of bytes to print (defaults to 1)
 getBytes() {
@@ -405,14 +404,96 @@ compressID3() {  # tested also tone and eyeD3; eyeD3 would be nice but python (a
 	fi
 }
 
+# extract Zlib, compress in Gzip, optimize Gzip, reinject Deflate stream into Zlib, so 4B Adler32 checksum in footer is not recomputed - note: Gzip header is at least 10B, and footer is 8B
+compressFileZlib() {
+	zlib-flate -uncompress <"$in" | gzip -1 >"$tmp".fast.gz
+	globnoextract= in="$tmp".fast.gz tmp="$tmp".gz compressFileGzip
+	rm "$tmp".fast.gz
+	{ base64 -d <<<eNo=; dd status=none if="$tmp".gz skip=10B count=$(($(wc -c <"$tmp".gz)-18))B iflag=fullblock; tail -c4 "$in";} >"$tmp"  # TODO other `dd` should use suffix B for skip and count too (thus removes iflag=skip_bytes,...)
+	rm "$tmp".gz
+}
+
 compressFileGzip() {  # tested tools: zopfli, zopfli MrKrzYch00's mod, gzip, 7z, minigzip (from minizip-ng). Tested on all files from silesia.tar (ect is far faster than zopfli(mod), and always gives smaller files - even when file is 1KB; ECT << zopfli < zopfli_mrkrzych00 << gzip); zopfli_mrkrzych00 --i9999 --mui999 --slowfix --t0 --pass9 --all androidsdk.svg
 	local uncompName=$(gzip -Nl "$in")
 	uncompName=${uncompName##*/}  # works only if $in is absolute path
-	gzip -dc "$in" >"$uncompName"
+	gzip -dc "$in" >"$uncompName"  # TODO skip uncompress if globnoextract
 	compressFile "$tmp_dir/$uncompName"
 	gzip -1c$([[ -v gziplossy || "$uncompName.gz" = "${in##*/}" ]] && echo n) "$uncompName" >"$tmp"
 	rm "$uncompName"
 	ect -${gzipinsane+8019}9 --mt-deflate -gzip --strict -quiet "$tmp"  # using strict won't recompress embedded file
+}
+
+bruteforce_helper() {
+	local tmp=$(mktemp -p"${tmp%/*}" "XXX.${tmp##*.}") last=''
+	cp "$in" "$tmp"
+
+	for cmd in "$@"
+	do	[ "$last" = "$cmd" ] || eval "$cmd"
+		last=$cmd
+	done
+	
+	echo -e "$(wc -c <"$tmp")\t$(/dev/shm/verify.sh "$in" "$tmp" || warning "lossy" 2>&1 )${@%% *}"
+	sem --id "$in" --fg '(($(wc -c <"$tmp")<$(wc -c <"$in"))) && mv "$tmp" "$in" || rm "$tmp"'
+}
+
+bruteforce() {
+	local i
+	parallel_args=()
+	for ((i=$#; i--;)); do
+		parallel_args+=(":::" "$@")
+	done
+	parallel bruteforce_helper "$template" "${parallel_args[@]}" | sort -n
+}
+
+
+compressFilePDF() {  # TODO there is also `mutool extract`;	for lossless recompression check, see `mutool draw` (converts pdf to vector graphics)
+	# TODO: best combination: cpdf -> pdfsizeopt -> mutool clean -> qpdf
+	# TODO but another test: qpdf -> mutool -> pdfsizeopt
+	# TODO test mutool -Zdze 100
+	# Warning it's not always the same order giving smallest file
+	# cpdf: -remove-metadata -remove-duplicate-fonts
+	mutool clean -m "$in" "$tmp"  # fix some corrupted/malformed files
+	#p=$(wc -c <"$tmp")
+	#while v=$p; mutool clean -mstgggg "$tmp" "$tmp"; p=$(wc -c <"$tmp"); ((p<v)); do :; done  # repeat, until size stops decreasing, "garbage collect objects/streams + merge/reuse duplicates + compact cross ref table"; I saw a file that needed 7 iterations
+	#qpdf --recompress-flate --compression-level=9 --object-streams=generate --decode-level=specialized --replace-input "$tmp"  # don't use decode-level=all or bigger output
+	# zopfli can be compiled in qpdf, see --zopfli (and AUR qpdf-zopfli);;;; can extract zlib streams with `qpdf --show-object={} in.pdf --raw-stream-data > {}.zlib`, but afaik only way to update it using qpdf is to use JSON
+	
+	# TODO for lossless check, see `mutool draw` (can convert pdf to vector graphics :chad:)
+	# TODO check with pdfsizeopt (see minuimus for that, nice args), or see parser here : https://blog.didierstevens.com/programs/pdf-tools/ to extract objects
+	# pdfsizeopt needed python2, ghostscript, sam2p, png22pnm
+	# pdfsizeopt --optimize --use-pngout=yes --use-jbig2=yes --use-sam2p-pr=yes --use-image-optimizer='ect -999 -strip --mt-deflate %(targetfnq)s' in.pdf out.pdf
+	# pdfsizeopt --do-require-image-optimizers=no --do-double-check-missing-glyphs=yes --use-pngout=no --use-multivalent=yes --do-keep-font-optionals=yes --use-image-optimizer='ect -999 -strip --mt-deflate %(targetfnq)s'
+	# --do-remove-core-fonts=yes might break things, but unlikely
+	# --use-image-optimizer="bash -c 'compressFile \$0' %(targetfnq)s"
+	# --use-zlib-optimizer="bash -c 'compressFile \$0' %(targetfnq)s"
+	# WARNING!!!!! NOT USING --do-optimize-images=no make QRcode completely black (bg too)
+	# sometimes multivalent inflates filesize -- always when using zlib optimizer !!!
+	# TODO check if sam2p args used by pdfsizeopt can't be slower/better-compression;;; use --use-image-compression=sam2p_pr
+	
+	# TODOOOOOO WARNING I don't think multiple instances of pdfsizeopt can be run simultaneously, because of how it creates unsafe tmp files
+
+	# Multivalent. If no `-inplace`, input.pdf -> input-o.pdf
+	# java -cp "${PATH%%:*}/Multivalent20060102.jar" -Djava.awt.headless=true tool.pdf.Compress -nopagepiece -noalt -mon -nowebcap -nostruct ${pdfbroken+-nocore} -inplace w.pdf
+	# TODO use 64bit exe for pdfsizeopt deps (32b rn), and see if we can compress the .jar as it is a zip
+
+	# TODO put in a while loop
+	# /usr/bin/gs -sDEVICE=pdfwrite -dCompatibilityLevel=1.5 -dNOPAUSE -q -dBATCH -dPrinted=false -sOutputFile=foo-compressed.pdf foo.pdf
+
+	# TODO pdfcpu is nice to update images (and maybe more) (even can use `pdfcpu optimize`)
+	# get the Obj# (e.g. 9), then update it inplace:
+	#	pdfcpu images list in.pdf
+	# 	pdfcpu images update in.pdf newimage.png out.pdf 9
+	
+	# TODO cpdf seems promising with -extract-stream/-replace-stream-with/-replace-obj
+	
+	bruteforce_functions=(
+		'qpdf --recompress-flate --compression-level=9 --object-streams=generate --decode-level=specialized --replace-input "$tmp"'
+		'java -cp "${PATH%%:*}/Multivalent20060102.jar" -Djava.awt.headless=true tool.pdf.Compress -nopagepiece -noalt -mon -nowebcap -nostruct ${pdfbroken+-nocore} -inplace "$tmp"'
+		'p=$(wc -c <"$tmp"); while v=$p; mutool clean -mstgggg "$tmp" "$tmp"; p=$(wc -c <"$tmp"); ((p<v)); do :; done'
+		'mutool clean -mstggggZze 100  "$tmp" "$tmp"'  # TODO maybe merge with above
+	)
+	
+	in=$tmp bruteforce "${bruteforce_functions[@]}"
 }
 
 compressFileZ() {
@@ -421,7 +502,7 @@ compressFileZ() {
 	flexiGIF -p ${zinsane--a=256} --compress "${tmp%.*}" "$tmp"
 }
 
-compressFileTar() {  # TODO use binsort
+compressFileTar() {  # TODO use binsort;; # TODO if $globstrip then what about using same timestamps 00:00:00 ... for all entries?
 	local uncompFolder=$(mktemp -dp"$tmp_dir")
 	tar xf "$in" -C"$uncompFolder"
 	compressTmpFolder "$uncompFolder"
@@ -489,27 +570,16 @@ compressFile() {
 	case $(file -b --mime-type "$in") in  # see here for known MIME types: /usr/share/mime/types
 		application/gzip | application/x-gzip)
 			compressFileGzip;;
-		application/pdf)  # TODO there is also `mutool extract`;	for lossless recompression check, see `mutool draw` (converts pdf to vector graphics)
-			# TODO: best combination: cpdf -> pdfsizeopt -> mutool clean -> qpdf
-			# TODO but another test: qpdf -> mutool -> pdfsizeopt
-			# TODO test mutool -Zdze 100
-			# Warning it's not always the same order giving smallest file
-			# cpdf: -remove-metadata -remove-duplicate-fonts
-			mutool clean -m "$in" "$tmp"  # fix some corrupted/malformed files
-			p=$(wc -c <"$tmp")
-			while v=$p; mutool clean -mstgggg "$tmp" "$tmp"; p=$(wc -c <"$tmp"); ((p<v)); do :; done  # repeat, until size stops decreasing, "garbage collect objects/streams + merge/reuse duplicates + compact cross ref table"; I saw a file that needed 7 iterations
-			qpdf --recompress-flate --compression-level=9 --object-streams=generate --decode-level=specialized --replace-input "$tmp"  # don't use decode-level=all or bigger output
-			# TODO for lossless check, see `mutool draw` (can convert pdf to vector graphics :chad:)
-			# TODO check with pdfsizeopt (see minuimus for that, nice args), or see parser here : https://blog.didierstevens.com/programs/pdf-tools/ to extract objects
-			# pdfsizeopt needed python2, ghostscript, sam2p, png22pnm
-			# pdfsizeopt --optimize --use-pngout=yes --use-jbig2=yes --use-sam2p-pr=yes --use-image-optimizer='ect -999 -strip --mt-deflate %(targetfnq)s' in.pdf out.pdf
-			;;
+		application/pdf)
+			compressFilePDF;;
 		application/x-compress)
 			compressFileZ;;
 		application/x-tar | application/x-cbt)
 			compressFileTar;;
 		application/zip | application/zip-compressed | application/x-zip-compressed)
 			compressFileZip;;
+		application/zlib)
+			compressFileZlib;;
 		audio/flac | audio/x-flac)  # Tested softwares (with different genres, 44.1 and 96 kHz, 16 and 24-bit, stereo): fork of reference FLAC 1.4.2 encoder https://github.com/ktmf01/flac; FLACOut.exe; CUETools.Flake.exe 2.2.2 --vbr 3 -11 -P 0 --lax --no-seektable -r 8 -e 32 -l 32 (tested different --window-method, -w, --vbr <0..4>, and did beat reference FLAC encoder *only* if I did *not* try -A functions); justinruggles' Flake
 			# Note on FLAC compression: I made several benchmarks (10 encodes with different settings for 40 wav - PCM s16 44.1 kHz - files).
 			# For easy copy-paste, here is a command. Nearly the same size as only using `subdivide_tukey(40)' (by ~0.01%), but taking 1.7x longer. Therefore if better compression ratio is needed I recommend only increasing the value given to `subdivide_tukey'.
@@ -585,13 +655,13 @@ compressFile() {
 			fi
 			rm -f "$tmp".*;;
 		audio/x-wavpack)  # FFmpeg will be slightly smaller than wavpack official encoder (for one thing, it lacks the WavPack 5 block checksums - but maybe not only? idk)
-			;;
+			size=0;;
 		image/gif)
 			# gifski and ImageMagick (-quality 100 -layers optimize) cannot recompress losslessly
 			# gifsicle and flexiGIF both can produce bigger output than input, only gifsicle *then* flexiGIF seems useful
 			# TODO gifsicle
 			# gifsicle -o 1"$i" -O3 --no-comments --no-extensions --no-app-extensions --no-names input.gif
-			;;
+			size=0;;
 		image/jpeg)
 			# tested jpegtran ect leanify pingo jpegoptim curtail jpgcrush jhead jpegultrascan.pl; JPG optimizer benchmark: https://encode.su/threads/3987-Jpeg-Optimizer-testing; exiv2 couldn't remove the whole XMP frame.
 
@@ -621,11 +691,12 @@ compressFile() {
 			#upscaled pixel art is very hard to beat.
 			#You resize the art back down to 1:1 pixels, then with lossless you add
 			#--already_downsampled --resampling=(2, 4 or 8, whichever is closest to the original) --upsampling_mode=0
+			#2, 4, 8 is 30B, 110B, 410B of overhead respectfully
 
 			# JXL max effort is now 11 with allow_expert_options, 10 otherwise
 
-			# For JPG lossless recompression, JXL does not *ALWAYS* output smaller file if input JPG is smaller (to "inflate" the JPG file, use `jpegtran -revert`
-			;;
+			# For JPG lossless recompression, JXL does not *ALWAYS* output smaller file if input JPG is smaller (to "inflate" the JPG file, use `jpegtran -revert`). >If you use non-standard [Huffman?] table, JXL need to store them for someone want to restore at future [so we could probably reach smaller JXL if we use std tables instead of true smallest JPG - look at libjpeg what are std tables?]
+			size=0;;
 		image/png | image/x-png | image/vnd.mozilla.apng)
 			# Tested software: ECT, leanify, zopflipng_mrkrzych00; zopflipng_mrkrzych00 -y -m --iterations=999 --slowfix --all --lossy_transparent --alpha_cleaners=bhvapw --pass=999 in out
 			# ECT is the best Deflate encoder (looking at compression ratio only), so the only way to beat it is to bruteforce even more filters than `ect --allfilters-b --pal_sort=120` (not using this as it takes ages), but then if we find a better filter we could run ect on it and it will reuse the filter if gives better ratio
@@ -667,7 +738,7 @@ compressFile() {
 	[ -v globkeeptime ] && { touch -md"$mtime" "$tmp"; touch -ad"$atime" "$tmp";}
 	if [ -v isEmbeddedFile ]
 	then mv "$tmp" "$out"
-	elif [ "$($([ "$in" = "$tmp" ] && echo cp || echo mv) -v $([[ "$in" = "$out" || -v globupdate ]] || echo --update=none) "$tmp" "$out")" ]  # cp $in instead of mv $tmp if $tmp is empty; `mv -v` prints nothing if nothing is done; using this to avoid race conditions by checking file existence then mv
+	elif [ "$($([ "$in" = "$tmp" ] && echo cp || echo mv) -v $([[ "$in" = "$out" || -v globupdate ]] || echo --update=none) "$tmp" "$out")" ]  # cp $in instead of mv $tmp if $tmp is empty; `mv/cp -v` prints nothing if nothing is done; using this to avoid race conditions by checking file existence then mv atomically
 	then chown -f --reference="$in" "$out"
 		chmod -f --reference="$in" "$out"
 		globstats_update $size $3
