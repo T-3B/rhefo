@@ -73,7 +73,7 @@ command_not_found_handle() {
 	"$@"
 }
 
-help=$(echo 'Really High Efficient File Optimizer (RHEFO), version '$version'. Under SSPL.
+help=$(<<< 'Really High Efficient File Optimizer (RHEFO), version '$version'. Under SSPL.
 For updates, supported files, dependencies, issues, license and many more, see:
   https://github.com/T-3B/rhefo
 Use this script with caution!
@@ -150,11 +150,11 @@ List of options (global ones first, then grouped by file type):
   if set, vendor string from Vorbis streams are removed
 --png-insane		better compression, far slower (TODO benchmark)
   if set, use 80199 iterations; default: 9 (PNG), 99 (APNG)
---z-insane			better compression, far slower (TODO benchmark)
+--z-insane		better compression, far slower (TODO benchmark)
   if set, try all block alignments on Unix compressed .Z; default: 256B-aligned
 --zip-insane		better compression, far slower (TODO benchmark)
   if set, use 80199 iterations; default: 9
---zip-nostd			better compression, slower, compatibility issues
+--zip-nostd		better compression, slower, compatibility issues
   if set, do not use only Deflate but also Deflate64,LZMA,PPMd,BZip2,Zstd,XZ
   default is to use standardized ZIP (only Deflate) if input is standard too
   WARNING! Many softwares do NOT support other compression but Deflate
@@ -184,8 +184,7 @@ rhefo -o /outdir <firstFile> <secondFile>
 # output will be copied to /outdir (folders/files tree is recreated from /indir)
 rhefo -o /outdir -m "*.flac" /indir
 # same as above, but flattened (no subdirectories in /outdir)
-find -name "*.flac" -type f -print0 | rhefo -0o /outdir' |\
-	GREP_COLORS=mt=\;33 grep --color=always -E '^--[[:alnum:]_-]+|$' | GREP_COLORS=mt=\;36 grep --color=always -P ' \| \K-\w|$' | GREP_COLORS=mt=\;32 grep --color=always 'better compression\|$' | GREP_COLORS=mt=\;31 grep --color=always 'worse compression\|compatibility issues\|$' | GREP_COLORS=mt=1 grep --color=always -P ', \Kmetalossy|$' | GREP_COLORS=mt=\;35 grep --color=always '^#.*\|$'
+find -name "*.flac" -type f -print0 | rhefo -0o /outdir' GREP_COLORS=mt=\;33 grep --color=always -E '^--[[:alnum:]_-]+|$' | GREP_COLORS=mt=\;36 grep --color=always -P ' \| \K-\w|$' | GREP_COLORS=mt=\;32 grep --color=always 'better compression\|$' | GREP_COLORS=mt=\;31 grep --color=always 'worse compression\|compatibility issues\|$' | GREP_COLORS=mt=1 grep --color=always -P ', \Kmetalossy|$' | GREP_COLORS=mt=\;35 grep --color=always '^#.*\|$'
 )
 
 # Will parse arguments, and then start the whole optimization process (if no errors in the arguments)
@@ -198,7 +197,7 @@ parseArgs() {  # not using `local` vars because this fct is only executed once
 	eval set -- "$args"
 	while :
 	do case "$1" in
-			-h)						echo "${help%%$'\n'*}"; echo "$help" | grep -e '^Usage: ' -e '\[;33m'; echo 'Run `rhefo --help` for the full help.'; exit;;
+			-h)						echo "${help%%$'\n'*}"; echo "$help" | grep -e '^Usage: ' -e '\[;33m'; info 'Run `rhefo --help` for the full help.'; exit;;
 			--help)					echo "$help"; exit;;
 			-x | --extract-addins)	[[ -d "$2" || -w "$2" ]] || error "Output directory '$2' does not exist or cannot write to it."; extractAddins "$2"; exit;;
 			-0 | --null)			stdinnull=;;
@@ -355,13 +354,15 @@ intToBytes() {
 	done
 }
 
-# $@=input files with THE SAME NAME BEFORE LAST DOT '.'
-# find the smallest input file, then rename it (with overwriting) without its last extension '.*', then delete all inputs
+# $@=input files with some common prefix (all absolute paths)
+# find the smallest input file, then rename it (with overwriting) to longest common prefix, then delete all inputs (except prefix)
+# WARNING: it is expected that $prefix is NOT present twice in any input
 catchSmallestFile() {
-	local a=$(find "$@" -printf '%s %f\0' | sort -nz | head -zn1 | tr -d \\0)  # need tr, otherwise we would have a warning msg for the trailing NULL byte
-	a=${a#* }
-	mv "$a" "${a%.*}"
-	rm -f "$@"  # -f to not print err msg, since there's a missing file ("$a") 
+	(($#<2)) && return
+	local smallest prefix=$(printf %s\\0 "$@" | perl -0777 -ne 'print $1 if /\A([^\0]*)(?=[^\0]*\0(?:\1[^\0]*\0)*\z)/')
+	read -rd '' _ smallest < <(find "$@" -printf '%s %f\0' | sort -nz)
+	mv "$smallest" "$prefix"
+	rm -f "${@/%$prefix/}"  # -f to not print err msg, since $smallest does not exist anymore and might try to `rm ''` (if 1 input == prefix, do not remove it).
 }
 
 # $1=input	$2=output(optional)
@@ -397,7 +398,7 @@ compressID3() {  # tested also tone and eyeD3; eyeD3 would be nice but python (a
 			then ((i+=$(synchsafeToInt "$1" $((i+4)))+10))
 			else ((i-=10))  # here, there is padding => update ID3v2.4 header global size + remove it
 				{ dd status=none bs=6 count=1 iflag=fullblock; printf $(printf '\\x%x' $((i>>21)) $((i>>14 & 0x7F)) $((i>>7 & 0x7F)) $((i & 0x7F))); dd status=none bs=$i count=1 iflag=fullblock iflag=skip_bytes skip=4; dd status=none bs=4k iflag=fullblock iflag=skip_bytes skip=$((tot-i-10));} <"$1" >"$1.new"
-				mv "$1.new" "$1"
+				mv "$1"{.new,}
 				break
 			fi
 		done
@@ -423,26 +424,32 @@ compressFileGzip() {  # tested tools: zopfli, zopfli MrKrzYch00's mod, gzip, 7z,
 	ect -${gzipinsane+8019}9 --mt-deflate -gzip --strict -quiet "$tmp"  # using strict won't recompress embedded file
 }
 
-bruteforce_helper() {
-	local tmp=$(mktemp -p"${tmp%/*}" "XXX.${tmp##*.}") last=''
-	cp "$in" "$tmp"
+verify_pdf() {
+	cmp -s <(mutool draw -r 30 -q -F pam "$1") <(mutool draw -r 30 -q -F pam "$2") || return 1; #{ mutool draw -r 30 -q -F pam -o /dev/shm/1_%03d.pam "$1";  mutool draw -r 30 -q -F pam -o /dev/shm/2_%03d.pam "$2"; cd /dev/shm/; for i in {001..174}; do cmp -s {1,2}_$i.pam || magick compare -highlight-color red -lowlight-color none -compose src {1,2}_$i.pam out_$i.pam; done; cd -; exit 1; }  # draw all pages as pics and compare output, stops as soon as a diff is found
+	# set out*.pam; PQIVRC_PATH=/dev/null pqiv $(printf %s\\n ${@//out/1} ${@//out/2} $@ | rev | sort -n | rev)
+	cmp -s <(exiftool -a -u -ee3 -api RequestAll=3 --system:all --exiftool:all --PDFVersion --Linearized --MediaBox -T -g4 -sort "$1"| tr -d \\t) <(exiftool -a -u -ee3 -api RequestAll=3 --system:all --exiftool:all --PDFVersion --Linearized --MediaBox -T -g4 -sort "$2"| tr -d \\t)  # cmp metadata (remove empty_values, system, exiftool and PDFVersion/linearized/MediaBox from output)
+}
 
-	for cmd in "$@"
-	do	[ "$last" = "$cmd" ] || eval "$cmd"
+bruteforce_helper() {
+	local orig=$tmp tmp=$(mktemp --suffix=".${tmp##*.}" "${tmp}_XXX") last cmd
+	cp "$orig" "$tmp"
+
+	for cmd
+	do	[ "$last" = "$cmd" ] || eval "$cmd"  # Skip if same command as previous one
 		last=$cmd
 	done
-	
-	echo -e "$(wc -c <"$tmp")\t$(/dev/shm/verify.sh "$in" "$tmp" || warning "lossy" 2>&1 )${@%% *}"
-	sem --id "$in" --fg '(($(wc -c <"$tmp")<$(wc -c <"$in"))) && mv "$tmp" "$in" || rm "$tmp"'
+
+	echo -e "$(wc -c <"$tmp")\t$(verify_pdf "$orig" "$tmp" || echo lossy)${@%% *}"
 }
 
 bruteforce() {
-	local i
-	parallel_args=()
-	for ((i=$#; i--;)); do
-		parallel_args+=(":::" "$@")
+	local i=$# parallel_args
+	while ((i--))
+	do	parallel_args+=(":::" "$@")  # To generate the n! permutations
 	done
-	parallel bruteforce_helper "$template" "${parallel_args[@]}" | sort -n
+	parallel bruteforce_helper "${parallel_args[@]}" | sort -n
+	catchSmallestFile "$tmp"_*
+	mv "$tmp"_* "$tmp"
 }
 
 
@@ -452,7 +459,7 @@ compressFilePDF() {  # TODO there is also `mutool extract`;	for lossless recompr
 	# TODO test mutool -Zdze 100
 	# Warning it's not always the same order giving smallest file
 	# cpdf: -remove-metadata -remove-duplicate-fonts
-	mutool clean -m "$in" "$tmp"  # fix some corrupted/malformed files
+	mutool clean -m "$in" "$tmp"  # fix some corrupted/malformed files, otherwise following steps would output empty file
 	#p=$(wc -c <"$tmp")
 	#while v=$p; mutool clean -mstgggg "$tmp" "$tmp"; p=$(wc -c <"$tmp"); ((p<v)); do :; done  # repeat, until size stops decreasing, "garbage collect objects/streams + merge/reuse duplicates + compact cross ref table"; I saw a file that needed 7 iterations
 	#qpdf --recompress-flate --compression-level=9 --object-streams=generate --decode-level=specialized --replace-input "$tmp"  # don't use decode-level=all or bigger output
@@ -485,15 +492,17 @@ compressFilePDF() {  # TODO there is also `mutool extract`;	for lossless recompr
 	# 	pdfcpu images update in.pdf newimage.png out.pdf 9
 	
 	# TODO cpdf seems promising with -extract-stream/-replace-stream-with/-replace-obj
+	optimizer='bash -c '\''compressFile "$0"'\'' %(targetfnq)s'
 	
 	bruteforce_functions=(
 		'qpdf --recompress-flate --compression-level=9 --object-streams=generate --decode-level=specialized --replace-input "$tmp"'
-		'java -cp "${PATH%%:*}/Multivalent20060102.jar" -Djava.awt.headless=true tool.pdf.Compress -nopagepiece -noalt -mon -nowebcap -nostruct ${pdfbroken+-nocore} -inplace "$tmp"'
-		'p=$(wc -c <"$tmp"); while v=$p; mutool clean -mstgggg "$tmp" "$tmp"; p=$(wc -c <"$tmp"); ((p<v)); do :; done'
+		'java -cp "${PATH%%:*}/Multivalent20060102.jar" -Djava.awt.headless=true tool.pdf.Compress -nopagepiece -noalt -mon -nowebcap -nostruct ${pdfbroken+-nocore} -inplace -quiet "$tmp" >/dev/null'
+		'local v p=$(wc -c <"$tmp"); while v=$p; mutool clean -mstgggg "$tmp" "$tmp"; p=$(wc -c <"$tmp"); ((p<v)); do :; done'
 		'mutool clean -mstggggZze 100  "$tmp" "$tmp"'  # TODO maybe merge with above
+		'pdfsizeopt.single --quiet --do-double-check-missing-glyphs=yes --use-pngout=no --do-keep-font-optionals=yes --do-remove-core-fonts=yes --use-image-optimizer='"${optimizer@Q}"' --use-zlib-optimizer='"${optimizer@Q}"' "$tmp"{,.pdf}; mv "$tmp"{.pdf,}'
 	)
 	
-	in=$tmp bruteforce "${bruteforce_functions[@]}"
+	bruteforce "${bruteforce_functions[@]}"
 }
 
 compressFileZ() {
@@ -541,7 +550,7 @@ compressFileZip() {  # tested softwares: minizip-ng, 7z, kzip, leanify, ect
 compressFile() {
 	[[ -v inTopLevel && -v globnoextract ]] && return  # do not optimize the file if embedded and --glob-noextract is set
 	set -a  # export everything automaticall (e.g. for sub-parallel calls)
-	local a p v  # variables for temporary/intermediate values, ONLY SET THEM IN THE CASE SWITCH
+	local a p v  # variables for temporary/intermediate values, ONLY SET THEM IN THE CASE SWITCH  # TODO remove
 	local atime mtime umask size size_tmp in=$2${1:+${2:+/}}$1 isEmbeddedFile tmp tmp_dir=$(mktemp --tmpdir -d XXX) out
 	atime=$(stat -c%x "$in")
 	mtime=$(stat -c%y "$in")
@@ -613,7 +622,7 @@ compressFile() {
 			flac "$tmp" $(ver_lte 'flac 1.5.0' "$(flac -v)" && echo -j $(nproc)) -o "$tmp".new -smepb 4096 -P 0 -r ${flacsubset+8 -l $(($(metaflac --show-sample-rate "$tmp")>48000?32:12))} ${flacsubset-15 -l 32 --lax} -A subdivide_tukey\(4${flacinsane+0}\)
 			v=$(metaflac --remove-all --dont-use-padding -o >(wc -c) "$tmp")
 			p=$(metaflac --remove-all --dont-use-padding -o >(wc -c) "$tmp".new)
-			((v>p)) && mv "$tmp".new "$tmp" || rm "$tmp".new
+			((v>p)) && mv "$tmp"{.new,} || rm "$tmp".new
 			if [ -v globstrip ]
 			then metaflac --remove-all "$tmp"  # here and not before flac command because will add VORBIS_COMMENT even if empty
 			elif [ -v flaclossy ]
@@ -623,7 +632,7 @@ compressFile() {
 				elif v=$(metaflac --show-vendor-tag "$tmp") && [ "$v" ]
 				then p=$(($(grep -abom1 "$v" "$tmp" | head -1 | cut -f1 -d:)-7))  # the first match is the vendor-string, use head because -om1 can output more than 1 match
 					{ dd status=none bs=$p count=1 iflag=fullblock; ((p=0x$(getBytes '' 0 3)-${#v})); intToBytes $p 3; intToBytes 0 4; dd status=none bs=4k iflag=fullblock iflag=skip_bytes skip=$((4+${#v}));} <"$tmp" >"$tmp".new  # TL;DR: 0xaaabbbb<vendorString>; aaa length metadata block in big endian, bbbb length vendor string in little
-					mv "$tmp".new "$tmp"
+					mv "$tmp"{.new,}
 				fi
 			fi
 			[ -v a ] && { wait; for p in $a; do metaflac --append "$tmp" <"$tmp".$p.blockNew; rm "$tmp".$p.blockNew; done;}  # we add PICTUREs back to the FLAC file
@@ -716,8 +725,8 @@ compressFile() {
 			fi;;
 		image/webp)  # only tested cwebp; cwebp -z9 is NOT always the smallest one! Therefore just bruteforce -z (which is an alias for -m and -q options)
 			if [ "$(exiftool -T -s -FileType "$in")" = 'WEBP (lossless)' ]
-			then parallel cwebp -quiet -lossless -alpha_filter best -metadata ${globstrip+icc}${globstrip-all} -z {} "$in" -o "$tmp".{} ::: {0..9}
-				catchSmallestFile "$tmp".*
+			then parallel cwebp -quiet -lossless -alpha_filter best -metadata ${globstrip+icc}${globstrip-all} -z {} "$in" -o "$tmp"{}.webp ::: {0..9}
+				catchSmallestFile "$tmp"?*
 			else imageStrip "$in" "$tmp" || cp "$in" "$tmp"  # TODO imageStrip for lossless
 				# [ "$(exiftool -icc_profile:ProfileDescription -T "$tmp")" = 'sRGB IEC61966-2.1' ] && exiftool -q -q -icc_profile:all= -overwrite_original "$tmp"  # rm ICC if it's the std one # TODO remove ICC if std, but search first what is the std one
 				:

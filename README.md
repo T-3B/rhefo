@@ -47,7 +47,7 @@ Optimize recursively current dir, inplace\
 `rhefo .`\
 Optimize as much as possible (**TAKES TIME!!!**) recursively current dir, inplace, keep timestamps and remove some useless metadata\
 `rhefo -9kl .`\
-Optimize with only 2 threads, and copy /indir *inside* /outdir\
+Optimize with only 2 concurrent jobs, and copy /indir *inside* /outdir\
 `rhefo -o /outdir -j2 /indir`\
 Optimize 2 files with default settings and write them to an existing /outdir\
 `rhefo -o /outdir <firstFile> <secondFile>`\
@@ -77,7 +77,7 @@ For each file type, many softwares and settings are tested, and only the one(s) 
 In many cases, different programs are used one after the other, to achieve the best possible compression (check script comments for more info).
 ### Fully supported file types:
 
-[//]: # (TODO, remove normal/insane from "behavior" description and add global speed - instant/normal/insane)
+[//]: # (TODO, remove normal/insane from "behavior" description and add global speed - instant/normal/insane)  TODO add Webp
 
 Extension|Deps|Behaviour|*Default*/insane&nbsp;speed
 :---:|:---:|---|:---:
