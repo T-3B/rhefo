@@ -425,9 +425,10 @@ compressFileGzip() {  # tested tools: zopfli, zopfli MrKrzYch00's mod, gzip, 7z,
 }
 
 verify_pdf() {
-	cmp -s <(mutool draw -r 30 -q -F pam "$1") <(mutool draw -r 30 -q -F pam "$2") || return 1; #{ mutool draw -r 30 -q -F pam -o /dev/shm/1_%03d.pam "$1";  mutool draw -r 30 -q -F pam -o /dev/shm/2_%03d.pam "$2"; cd /dev/shm/; for i in {001..174}; do cmp -s {1,2}_$i.pam || magick compare -highlight-color red -lowlight-color none -compose src {1,2}_$i.pam out_$i.pam; done; cd -; exit 1; }  # draw all pages as pics and compare output, stops as soon as a diff is found
+	cmp -s <(mutool draw -r 30 -q -F pam "$1") <(mutool draw -r 30 -q -F pam "$2") || return 1;
+	#{ mutool draw -r 30 -q -F pam -o /dev/shm/1_%03d.pam "$1";  mutool draw -r 30 -q -F pam -o /dev/shm/2_%03d.pam "$2"; cd /dev/shm/; for i in {001..174}; do cmp -s {1,2}_$i.pam || magick compare -highlight-color red -lowlight-color none -compose src {1,2}_$i.pam out_$i.pam; done; cd -; exit 1; }  # draw all pages as pics and compare output, stops as soon as a diff is found
 	# set out*.pam; PQIVRC_PATH=/dev/null pqiv $(printf %s\\n ${@//out/1} ${@//out/2} $@ | rev | sort -n | rev)
-	cmp -s <(exiftool -a -u -ee3 -api RequestAll=3 --system:all --exiftool:all --PDFVersion --Linearized --MediaBox -T -g4 -sort "$1"| tr -d \\t) <(exiftool -a -u -ee3 -api RequestAll=3 --system:all --exiftool:all --PDFVersion --Linearized --MediaBox -T -g4 -sort "$2"| tr -d \\t)  # cmp metadata (remove empty_values, system, exiftool and PDFVersion/linearized/MediaBox from output)
+	#cmp -s <(exiftool -a -u -ee3 -api RequestAll=3 --system:all --exiftool:all --PDFVersion --Linearized --MediaBox -T -g4 -sort "$1"| tr -d \\t) <(exiftool -a -u -ee3 -api RequestAll=3 --system:all --exiftool:all --PDFVersion --Linearized --MediaBox -T -g4 -sort "$2"| tr -d \\t)  # cmp metadata (remove empty_values, system, exiftool and PDFVersion/linearized/MediaBox from output)
 }
 
 bruteforce_helper() {
@@ -476,8 +477,6 @@ compressFilePDF() {  # TODO there is also `mutool extract`;	for lossless recompr
 	# WARNING!!!!! NOT USING --do-optimize-images=no make QRcode completely black (bg too)
 	# sometimes multivalent inflates filesize -- always when using zlib optimizer !!!
 	# TODO check if sam2p args used by pdfsizeopt can't be slower/better-compression;;; use --use-image-compression=sam2p_pr
-	
-	# TODOOOOOO WARNING I don't think multiple instances of pdfsizeopt can be run simultaneously, because of how it creates unsafe tmp files
 
 	# Multivalent. If no `-inplace`, input.pdf -> input-o.pdf
 	# java -cp "${PATH%%:*}/Multivalent20060102.jar" -Djava.awt.headless=true tool.pdf.Compress -nopagepiece -noalt -mon -nowebcap -nostruct ${pdfbroken+-nocore} -inplace w.pdf
@@ -495,11 +494,11 @@ compressFilePDF() {  # TODO there is also `mutool extract`;	for lossless recompr
 	optimizer='bash -c '\''compressFile "$0"'\'' %(targetfnq)s'
 	
 	bruteforce_functions=(
-		'qpdf --recompress-flate --compression-level=9 --object-streams=generate --decode-level=specialized --replace-input "$tmp"'
-		'java -cp "${PATH%%:*}/Multivalent20060102.jar" -Djava.awt.headless=true tool.pdf.Compress -nopagepiece -noalt -mon -nowebcap -nostruct ${pdfbroken+-nocore} -inplace -quiet "$tmp" >/dev/null'
-		'local v p=$(wc -c <"$tmp"); while v=$p; mutool clean -mstgggg "$tmp" "$tmp"; p=$(wc -c <"$tmp"); ((p<v)); do :; done'
-		'mutool clean -mstggggZze 100  "$tmp" "$tmp"'  # TODO maybe merge with above
-		'pdfsizeopt.single --quiet --do-double-check-missing-glyphs=yes --use-pngout=no --do-keep-font-optionals=yes --do-remove-core-fonts=yes --use-image-optimizer='"${optimizer@Q}"' --use-zlib-optimizer='"${optimizer@Q}"' "$tmp"{,.pdf}; mv "$tmp"{.pdf,}'
+		#'qpdf --recompress-flate --compression-level=9 --object-streams=generate --decode-level=specialized --replace-input "$tmp"'
+		#'java -cp "${PATH%%:*}/Multivalent20060102.jar" -Djava.awt.headless=true tool.pdf.Compress -nopagepiece -noalt -mon -nowebcap -nostruct ${pdfbroken+-nocore} -inplace -quiet "$tmp" >/dev/null'
+		#'local v p=$(wc -c <"$tmp"); while v=$p; mutool clean -mstgggg "$tmp" "$tmp"; p=$(wc -c <"$tmp"); ((p<v)); do :; done'
+		#'mutool clean -mstggggZze 100  "$tmp" "$tmp"'  # TODO maybe merge with above
+		'pdfsizeopt.single --tmp-dir="$(mktemp -dp "${tmp%/*}")" --quiet --do-double-check-missing-glyphs=yes --use-pngout=no --do-keep-font-optionals=yes --do-remove-core-fonts=yes --use-image-optimizer='"${optimizer@Q}"' --use-zlib-optimizer='"${optimizer@Q}"' "$tmp"{,.pdf}; mv "$tmp"{.pdf,}'
 	)
 	
 	bruteforce "${bruteforce_functions[@]}"
